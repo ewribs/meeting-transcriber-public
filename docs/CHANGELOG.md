@@ -7,6 +7,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 ## Unreleased
 
 ### Added
+- Added a dry-run-first private-to-public synchronization helper with public-only file preservation, transient-file exclusion, candidate validation, and post-sync validation.
 - Added a repeatable public-release export builder that strips private/per-user state, rewrites public-safe bundle identifiers, and requires a clean release audit.
 - Added a tracked-file public-release audit scanner with optional Git-ignored sensitive-literal denylist support.
 - Added a Public Release Privacy Guide covering sanitized exports, fresh public history, and manual review requirements.

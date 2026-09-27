@@ -116,3 +116,17 @@ python tools/build_public_release.py \
 ```
 
 Run it only from a clean private development checkout after the full test suite and private denylist audit pass. The generated ZIP contains no Git history; initialize a brand-new public repository from the extracted export.
+
+## Synchronizing the public repository
+
+The private repository is the development source of truth. Shared source code and documentation should be changed and tested there first. The public repository is a sanitized mirror with fresh public Git history.
+
+Use `python tools/sync_public_release.py` to preview synchronization. The default mode is a dry run: it requires clean private and public Git working trees, builds and validates a sanitized export from committed private `HEAD`, runs the full Python regression suite, and shows the exact rsync changes without modifying the public repository.
+
+After reviewing the dry-run output, apply the synchronization with `python tools/sync_public_release.py --apply`. The apply pass validates the synchronized public repository again and leaves the changes uncommitted for final review.
+
+Public-only files and directories are listed in `public_release_preserve.txt`. These currently include `.github/`. The public `.git/` directory is always protected automatically.
+
+Transient files such as `__pycache__/`, `*.pyc`, `*.pyo`, and `.DS_Store` are excluded from synchronization. Private-only files such as local identity/business configuration, `release_audit.local.json`, `docs/internal/`, and `docs/PUBLIC_RELEASE_AUDIT.md` are removed by the sanitized release builder before synchronization.
+
+Do not develop shared code directly in the public repository. Public-only repository metadata such as GitHub-specific configuration may be maintained there. The MIT `LICENSE` file is shared from the private source repository.

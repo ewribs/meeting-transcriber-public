@@ -138,3 +138,13 @@ Maintain real sensitive names, supplier aliases, internal acronyms, domains, and
 See [Public Release Privacy Guide](PUBLIC_RELEASE.md) for the complete release process.
 
 For a fresh-history-ready export, use `python tools/build_public_release.py` after all tests and the private release audit pass. See [Public Release Privacy Guide](PUBLIC_RELEASE.md).
+
+## Private and public repositories
+
+`~/Projects/meeting-transcriber` is the development source of truth. Shared code and documentation are developed, tested, and committed there.
+
+`~/Projects/meeting-transcriber-public` is the sanitized public mirror. Do not make shared product changes directly in that repository.
+
+After private changes are committed and validated, preview the public synchronization with `python tools/sync_public_release.py`. Apply it only after reviewing the dry-run output with `python tools/sync_public_release.py --apply`.
+
+See [Public Release Privacy Guide](PUBLIC_RELEASE.md) for the complete release and synchronization model.
