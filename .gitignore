@@ -1,0 +1,27 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Meeting data
+meetings/
+output/
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# Xcode user-specific state
+xcuserdata/
+*.xcuserstate
+
+# Local user configuration
+known_people.json
+known_people.local.json
+identity.local.json
+business_context.local.json
+release_audit.local.json

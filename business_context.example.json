@@ -1,0 +1,18 @@
+{
+  "topic_normalization_rules": [
+    {
+      "key": "vendor_alpha_renewal",
+      "markers": [
+        "vendor alpha",
+        "alpha renewal"
+      ]
+    },
+    {
+      "key": "platform_gamma_migration",
+      "markers": [
+        "platform gamma",
+        "gamma migration"
+      ]
+    }
+  ]
+}

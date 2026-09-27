@@ -1,0 +1,555 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		811BF227305A18BE001FFEEA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 811BF211305A18BD001FFEEA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 811BF218305A18BD001FFEEA;
+			remoteInfo = "Meeting Transcriber";
+		};
+		811BF231305A18BE001FFEEA /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 811BF211305A18BD001FFEEA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 811BF218305A18BD001FFEEA;
+			remoteInfo = "Meeting Transcriber";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		811BF219305A18BD001FFEEA /* Meeting Transcriber.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Meeting Transcriber.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		811BF226305A18BE001FFEEA /* Meeting TranscriberTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Meeting TranscriberTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		811BF230305A18BE001FFEEA /* Meeting TranscriberUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Meeting TranscriberUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		811BF21B305A18BD001FFEEA /* Meeting Transcriber */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Meeting Transcriber";
+			sourceTree = "<group>";
+		};
+		811BF229305A18BE001FFEEA /* Meeting TranscriberTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Meeting TranscriberTests";
+			sourceTree = "<group>";
+		};
+		811BF233305A18BE001FFEEA /* Meeting TranscriberUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Meeting TranscriberUITests";
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		811BF216305A18BD001FFEEA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		811BF223305A18BE001FFEEA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		811BF22D305A18BE001FFEEA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		811BF210305A18BD001FFEEA = {
+			isa = PBXGroup;
+			children = (
+				811BF21B305A18BD001FFEEA /* Meeting Transcriber */,
+				811BF229305A18BE001FFEEA /* Meeting TranscriberTests */,
+				811BF233305A18BE001FFEEA /* Meeting TranscriberUITests */,
+				811BF21A305A18BD001FFEEA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		811BF21A305A18BD001FFEEA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				811BF219305A18BD001FFEEA /* Meeting Transcriber.app */,
+				811BF226305A18BE001FFEEA /* Meeting TranscriberTests.xctest */,
+				811BF230305A18BE001FFEEA /* Meeting TranscriberUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		811BF218305A18BD001FFEEA /* Meeting Transcriber */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 811BF238305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting Transcriber" */;
+			buildPhases = (
+				811BF215305A18BD001FFEEA /* Sources */,
+				811BF216305A18BD001FFEEA /* Frameworks */,
+				811BF217305A18BD001FFEEA /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				811BF21B305A18BD001FFEEA /* Meeting Transcriber */,
+			);
+			name = "Meeting Transcriber";
+			productName = "Meeting Transcriber";
+			productReference = 811BF219305A18BD001FFEEA /* Meeting Transcriber.app */;
+			productType = "com.apple.product-type.application";
+		};
+		811BF225305A18BE001FFEEA /* Meeting TranscriberTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 811BF23B305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting TranscriberTests" */;
+			buildPhases = (
+				811BF222305A18BE001FFEEA /* Sources */,
+				811BF223305A18BE001FFEEA /* Frameworks */,
+				811BF224305A18BE001FFEEA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				811BF228305A18BE001FFEEA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				811BF229305A18BE001FFEEA /* Meeting TranscriberTests */,
+			);
+			name = "Meeting TranscriberTests";
+			productName = "Meeting TranscriberTests";
+			productReference = 811BF226305A18BE001FFEEA /* Meeting TranscriberTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		811BF22F305A18BE001FFEEA /* Meeting TranscriberUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 811BF23E305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting TranscriberUITests" */;
+			buildPhases = (
+				811BF22C305A18BE001FFEEA /* Sources */,
+				811BF22D305A18BE001FFEEA /* Frameworks */,
+				811BF22E305A18BE001FFEEA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				811BF232305A18BE001FFEEA /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				811BF233305A18BE001FFEEA /* Meeting TranscriberUITests */,
+			);
+			name = "Meeting TranscriberUITests";
+			productName = "Meeting TranscriberUITests";
+			productReference = 811BF230305A18BE001FFEEA /* Meeting TranscriberUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		811BF211305A18BD001FFEEA /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					811BF218305A18BD001FFEEA = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					811BF225305A18BE001FFEEA = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 811BF218305A18BD001FFEEA;
+					};
+					811BF22F305A18BE001FFEEA = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 811BF218305A18BD001FFEEA;
+					};
+				};
+			};
+			buildConfigurationList = 811BF214305A18BD001FFEEA /* Build configuration list for PBXProject "Meeting Transcriber" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 811BF210305A18BD001FFEEA;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 811BF21A305A18BD001FFEEA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				811BF218305A18BD001FFEEA /* Meeting Transcriber */,
+				811BF225305A18BE001FFEEA /* Meeting TranscriberTests */,
+				811BF22F305A18BE001FFEEA /* Meeting TranscriberUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		811BF217305A18BD001FFEEA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		811BF224305A18BE001FFEEA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		811BF22E305A18BE001FFEEA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		811BF215305A18BD001FFEEA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		811BF222305A18BE001FFEEA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		811BF22C305A18BE001FFEEA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		811BF228305A18BE001FFEEA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 811BF218305A18BD001FFEEA /* Meeting Transcriber */;
+			targetProxy = 811BF227305A18BE001FFEEA /* PBXContainerItemProxy */;
+		};
+		811BF232305A18BE001FFEEA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 811BF218305A18BD001FFEEA /* Meeting Transcriber */;
+			targetProxy = 811BF231305A18BE001FFEEA /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		811BF236305A18BE001FFEEA /* Debug configuration for PBXProject "Meeting Transcriber" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		811BF237305A18BE001FFEEA /* Release configuration for PBXProject "Meeting Transcriber" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		811BF239305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting Transcriber" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Meeting Transcriber/Meeting Transcriber.entitlements";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meeting Transcriber uses the selected audio input to record meetings for local transcription.";
+				INFOPLIST_KEY_NSNetworkVolumesUsageDescription = "Meeting Transcriber accesses the configured archive volume to display full meeting notes, summaries, topics, and published meeting content.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriber";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		811BF23A305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting Transcriber" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "Meeting Transcriber/Meeting Transcriber.entitlements";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Meeting Transcriber uses the selected audio input to record meetings for local transcription.";
+				INFOPLIST_KEY_NSNetworkVolumesUsageDescription = "Meeting Transcriber accesses the configured archive volume to display full meeting notes, summaries, topics, and published meeting content.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriber";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		811BF23C305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting TranscriberTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriberTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meeting Transcriber.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Meeting Transcriber";
+			};
+			name = Debug;
+		};
+		811BF23D305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting TranscriberTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = MG9NPCCXE6;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriberTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Meeting Transcriber.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Meeting Transcriber";
+			};
+			name = Release;
+		};
+		811BF23F305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting TranscriberUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriberUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "Meeting Transcriber";
+			};
+			name = Debug;
+		};
+		811BF240305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting TranscriberUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "org.example.meetingtranscriber.MeetingTranscriberUITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = "Meeting Transcriber";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		811BF214305A18BD001FFEEA /* Build configuration list for PBXProject "Meeting Transcriber" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				811BF236305A18BE001FFEEA /* Debug configuration for PBXProject "Meeting Transcriber" */,
+				811BF237305A18BE001FFEEA /* Release configuration for PBXProject "Meeting Transcriber" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		811BF238305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting Transcriber" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				811BF239305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting Transcriber" */,
+				811BF23A305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting Transcriber" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		811BF23B305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting TranscriberTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				811BF23C305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting TranscriberTests" */,
+				811BF23D305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting TranscriberTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		811BF23E305A18BE001FFEEA /* Build configuration list for PBXNativeTarget "Meeting TranscriberUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				811BF23F305A18BE001FFEEA /* Debug configuration for PBXNativeTarget "Meeting TranscriberUITests" */,
+				811BF240305A18BE001FFEEA /* Release configuration for PBXNativeTarget "Meeting TranscriberUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 811BF211305A18BD001FFEEA /* Project object */;
+	validationLevel = 1;
+}

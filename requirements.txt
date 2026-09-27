@@ -1,0 +1,2 @@
+# Runtime Python dependency used by summary/HTML generation.
+Markdown>=3.5,<4

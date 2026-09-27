@@ -1,0 +1,11 @@
+{
+  "sensitive_literals": [
+    "Example Employee Name",
+    "Example Supplier Name",
+    "example.internal"
+  ],
+  "allowed_bundle_prefixes": [
+    "com.example.",
+    "org.example."
+  ]
+}
