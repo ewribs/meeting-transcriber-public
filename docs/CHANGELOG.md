@@ -8,8 +8,6 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ### Added
 - Added a repeatable public-release export builder that strips private/per-user state, rewrites public-safe bundle identifiers, and requires a clean release audit.
-
-### Added
 - Added a tracked-file public-release audit scanner with optional Git-ignored sensitive-literal denylist support.
 - Added a Public Release Privacy Guide covering sanitized exports, fresh public history, and manual review requirements.
 - Hardware-aware performance profile UX in Preferences, including detected hardware, effective profile resolution (for example, `Auto → High Performance`), context mode, effective context size, and direct-token budget.
