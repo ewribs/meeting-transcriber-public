@@ -1,3 +1,7 @@
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
 # Meeting Transcriber
 
 Meeting Transcriber is a local-first macOS application for recording, transcribing, summarizing, searching, and revisiting meetings without sending meeting content to a hosted AI service.
