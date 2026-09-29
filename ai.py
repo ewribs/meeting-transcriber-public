@@ -107,7 +107,11 @@ Use this exact structure:
 ## Risks and Concerns
 
 - Maximum 5 bullets.
-- Include only material business risks, dependencies, blockers, or uncertainties.
+- Include only risks or concerns explicitly stated by a participant.
+- Do not infer hypothetical downstream risk from ordinary complexity, cost, timing,
+  vendor relationships, contract terms, or administrative friction.
+- A statement that something is not a risk must never be rewritten as a risk.
+- If none are explicitly supported, write "None identified."
 
 ## Open Questions
 
@@ -1348,6 +1352,41 @@ def _deduplicate_decisions(decisions: list[dict]) -> list[dict]:
     return kept
 
 
+_RISK_EVIDENCE_PATTERN = re.compile(
+    r"\b(?:risk|risks|risky|concern|concerns|concerned|worry|worried|"
+    r"blocker|blocked|blocking|uncertainty|uncertain|issue|issues|problem|"
+    r"problems|challenge|challenges|delay|delays|delayed|dependency|dependencies)\b",
+    flags=re.IGNORECASE,
+)
+
+_RISK_NEGATION_PATTERN = re.compile(
+    r"(?:\b(?:no|not|without|isn't|aren't|wasn't|weren't)\b.{0,28}"
+    r"\b(?:risk|risks|concern|concerns|issue|issues|problem|problems|"
+    r"blocker|blockers|delay|delays)\b|"
+    r"\b(?:risk|risks|concern|concerns|issue|issues|problem|problems|"
+    r"blocker|blockers|delay|delays)\b.{0,28}\b(?:none|no|not)\b)",
+    flags=re.IGNORECASE,
+)
+
+
+def _risk_is_supported(risk: str, evidence: str) -> bool:
+    """Require an explicit, non-negated risk/concern statement and lexical support."""
+
+    if not risk or not evidence:
+        return False
+    if not _RISK_EVIDENCE_PATTERN.search(evidence):
+        return False
+    if _RISK_NEGATION_PATTERN.search(evidence):
+        return False
+
+    risk_tokens = _meaningful_tokens(risk)
+    evidence_tokens = _meaningful_tokens(evidence)
+    if not risk_tokens:
+        return False
+    required_overlap = min(2, len(risk_tokens))
+    return len(risk_tokens & evidence_tokens) >= required_overlap
+
+
 def _is_well_formed_question(question: str) -> bool:
     """Reject ASR fragments and rhetorical confirmation questions."""
 
@@ -2161,6 +2200,25 @@ def extract_grounded_commitments_and_decisions(
                     "additionalProperties": False,
                 },
             },
+            "risks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "risk": {
+                            "type": "string",
+                        },
+                        "evidence": {
+                            "type": "string",
+                        },
+                    },
+                    "required": [
+                        "risk",
+                        "evidence",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
             "open_questions": {
                 "type": "array",
                 "items": {
@@ -2203,6 +2261,7 @@ def extract_grounded_commitments_and_decisions(
         "required": [
             "commitments",
             "decisions",
+            "risks",
             "open_questions",
             "follow_ups",
         ],
@@ -2253,6 +2312,7 @@ def extract_grounded_commitments_and_decisions(
 
     validated_commitments = []
     validated_decisions = []
+    validated_risks = []
     validated_open_questions = []
     validated_follow_ups = []
 
@@ -2268,7 +2328,7 @@ def extract_grounded_commitments_and_decisions(
         )
 
         prompt = f"""
-You are extracting only explicit commitments and decisions
+You are extracting only explicit, transcript-supported meeting facts
 from one chronological section of a business meeting transcript.
 
 Meeting:
@@ -2314,6 +2374,18 @@ DECISIONS:
 - The decision field may be a concise paraphrase, but must not
   add information not supported by the evidence.
 
+RISKS AND CONCERNS:
+- Include only a material risk, concern, blocker, dependency, or uncertainty
+  that a participant explicitly states in this section.
+- The evidence field MUST contain exact words copied from the transcript.
+- Do not infer a risk merely because something is expensive, complicated,
+  delayed-looking, vendor-related, contractual, or administratively frustrating.
+- Do not convert a statement denying risk (for example, "we are not at risk")
+  into a risk.
+- The risk field may be a concise paraphrase, but it must not add a consequence
+  or business impact that the evidence does not state.
+- Prefer omission over a plausible but implicit risk.
+
 OPEN QUESTIONS:
 - Include only a question that a participant explicitly raised
   and that remained unanswered in this section.
@@ -2337,8 +2409,8 @@ GENERAL:
   and unrelated material.
 - Prefer omission over weak or ambiguous items.
 - Do not invent anything.
-- If this section contains no valid commitments or decisions,
-  return empty arrays for every field.
+- If this section contains no valid facts for a field, return an empty array
+  for that field.
 
 Transcript section:
 
@@ -2361,6 +2433,7 @@ Transcript section:
             result = {
                 "commitments": [],
                 "decisions": [],
+                "risks": [],
                 "open_questions": [],
                 "follow_ups": [],
             }
@@ -2532,6 +2605,34 @@ Transcript section:
             validated_decisions.append(fallback)
             existing_evidence.add(evidence_key)
 
+        risks = result.get(
+            "risks",
+            [],
+        )
+
+        for item in risks:
+            if not isinstance(item, dict):
+                continue
+
+            evidence_text = str(
+                item.get("evidence", "")
+            ).strip()
+            if not evidence_text or evidence_text not in chunk:
+                continue
+
+            risk_text = str(
+                item.get("risk", "")
+            ).strip()
+            if not _risk_is_supported(risk_text, evidence_text):
+                continue
+
+            grounded_risk = {
+                "risk": risk_text,
+                "evidence": evidence_text,
+            }
+            if grounded_risk not in validated_risks:
+                validated_risks.append(grounded_risk)
+
         open_questions = result.get(
             "open_questions",
             [],
@@ -2611,6 +2712,7 @@ Transcript section:
     return {
         "commitments": validated_commitments,
         "decisions": _deduplicate_decisions(validated_decisions),
+        "risks": validated_risks,
         "open_questions": validated_open_questions,
         "follow_ups": validated_follow_ups,
     }
@@ -2647,6 +2749,11 @@ def build_complete_meeting_memory(
 
     memory["decisions"] = grounded.get(
         "decisions",
+        [],
+    )
+
+    memory["risks"] = grounded.get(
+        "risks",
         [],
     )
 
@@ -2826,6 +2933,15 @@ def compose_summary_with_meeting_memory(
         if line not in action_lines:
             action_lines.append(line)
 
+    risk_lines = []
+    for item in memory.get("risks", []):
+        if isinstance(item, dict):
+            text = str(item.get("risk", "")).strip()
+        else:
+            text = str(item).strip()
+        if text and f"- {text}" not in risk_lines:
+            risk_lines.append(f"- {text}")
+
     question_lines = []
     for item in memory.get("open_questions", []):
         text = str(item).strip()
@@ -2868,6 +2984,11 @@ def compose_summary_with_meeting_memory(
         composed,
         "Action Items",
         "\n".join(action_lines) or "None identified.",
+    )
+    composed = _replace_markdown_section(
+        composed,
+        "Risks and Concerns",
+        "\n".join(risk_lines) or "None identified.",
     )
     composed = _replace_markdown_section(
         composed,
@@ -3273,8 +3394,12 @@ OPEN QUESTIONS
 - If none remain unresolved, write "None identified."
 
 RISKS AND STATUS
-- Include only risks, blockers, dependencies, or uncertainties actually stated
-  or directly established by the source.
+- Include only risks, concerns, blockers, dependencies, or uncertainties explicitly
+  stated by a participant in the source.
+- Do not infer hypothetical downstream risk from complexity, cost, timing, vendor
+  relationships, contract terms, or administrative friction.
+- If the source says an item is not a risk, do not restate it as a risk.
+- If no risk or concern is explicitly supported, write "None identified."
 - Do not mark a topic closed merely because a choice was discussed. Closed means
   the source establishes that the matter is complete/resolved with no remaining
   work relevant to the topic.

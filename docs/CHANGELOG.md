@@ -39,6 +39,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ### Fixed
 - Fixed fresh installations ignoring the configured Meetings / Recordings directory during transcription preflight and runtime processing.
+- Grounded Risks and Concerns in transcript evidence so unsupported hypothetical risks are omitted and sections with no supported risks render `None identified.`
 - Stabilized grounded meeting-memory and summary composition so precision-sensitive sections are sourced from structured evidence rather than free-form narrative output.
 - Fixed explicit decision recovery for vendor-removal decisions and semantic deduplication of repeated decision fragments.
 - Prevented malformed or rhetorical questions from being promoted into authoritative open questions.

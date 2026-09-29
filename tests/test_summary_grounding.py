@@ -16,6 +16,10 @@ None identified.
 
 - Invented action
 
+## Risks and Concerns
+
+- Vendor complexity could increase costs.
+
 ## Open Questions
 
 - What should happen next?
@@ -28,6 +32,7 @@ None identified.
                 }
             ],
             "commitments": [],
+            "risks": [],
             "open_questions": [],
             "topics": [
                 {
@@ -42,6 +47,8 @@ None identified.
 
         self.assertIn("- Cut Vendor Gamma from the vendor list.", result)
         self.assertNotIn("Invented action", result)
+        self.assertNotIn("Vendor complexity could increase costs.", result)
+        self.assertRegex(result, r"## Risks and Concerns\s+None identified\.")
         self.assertNotIn("What should happen next?", result)
         self.assertIn("## Topics", result)
         self.assertIn("### MFD RFP Recommendation — ongoing", result)
@@ -57,6 +64,8 @@ None identified.
         self.assertIn("Never promote discussion", prompt)
         self.assertIn("ACTION ITEMS", prompt)
         self.assertIn("OPEN QUESTIONS", prompt)
+        self.assertIn("If no risk or concern is explicitly supported", prompt)
+        self.assertIn("do not restate it as a risk", prompt.lower())
         self.assertIn("CROSS-SECTION CONSISTENCY", prompt)
         self.assertIn("no decisions", prompt)
         self.assertIn("explicitly decided to renew Vendor A", prompt)

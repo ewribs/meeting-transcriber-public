@@ -351,6 +351,88 @@ class GroundedExtractionTests(unittest.TestCase):
 
         self.assertEqual(result["commitments"][0]["action"], transcript)
 
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_risks_require_explicit_non_negated_verbatim_evidence(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "we just gotta get delivery before the end of the year four to six weeks "
+            "for hardware so it's really not we're not at any risk really no. "
+            "I am worried the support renewal could miss the December deadline."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [],
+                "decisions": [],
+                "risks": [
+                    {
+                        "risk": "Hardware delivery timing is a risk.",
+                        "evidence": "we're not at any risk really no",
+                    },
+                    {
+                        "risk": "Support renewal could miss the December deadline.",
+                        "evidence": "I am worried the support renewal could miss the December deadline.",
+                    },
+                    {
+                        "risk": "Vendor complexity could increase long-term costs.",
+                        "evidence": "four to six weeks for hardware",
+                    },
+                ],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="RISKTEST",
+            transcript=transcript,
+        )
+
+        self.assertEqual(
+            result["risks"],
+            [
+                {
+                    "risk": "Support renewal could miss the December deadline.",
+                    "evidence": "I am worried the support renewal could miss the December deadline.",
+                }
+            ],
+        )
+
+    @patch("ai.extract_grounded_commitments_and_decisions")
+    @patch("ai.build_meeting_memory")
+    def test_grounded_risks_replace_summary_generated_risks(
+        self,
+        build_memory,
+        extract_grounded,
+    ):
+        build_memory.return_value = {
+            "topics": [],
+            "commitments": [],
+            "decisions": [],
+            "risks": ["Invented narrative risk"],
+            "open_questions": [],
+            "follow_ups": [],
+        }
+        extract_grounded.return_value = {
+            "commitments": [],
+            "decisions": [],
+            "risks": [],
+            "open_questions": [],
+            "follow_ups": [],
+        }
+
+        result = ai.build_complete_meeting_memory(
+            meeting_label="RISKTEST",
+            meeting_summary="summary",
+            transcript="there is no risk here",
+        )
+
+        self.assertEqual(result["risks"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
