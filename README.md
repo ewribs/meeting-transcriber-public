@@ -1,8 +1,16 @@
 # Meeting Transcriber
 
-Meeting Transcriber is a local-first macOS application for recording, transcribing, summarizing, searching, and revisiting meetings without sending meeting content to a hosted AI service.
+**Turn meetings into searchable memory — locally.**
 
-The supported desktop experience is the native **SwiftUI** app under `swift/Meeting Transcriber/`. The Swift app delegates transcription, local AI, meeting memory, search, sessions, persistence, publishing, and retention logic to the Python backend in this repository.
+Meeting Transcriber is a local-first meeting intelligence application for macOS and Apple Silicon. It records or imports meetings, transcribes them with `whisper.cpp`, summarizes them with local Ollama models, and turns the results into searchable meeting memory without sending meeting content to a hosted AI service.
+
+The supported desktop experience is a native **SwiftUI** app. The Swift app delegates transcription, local AI, meeting memory, search, sessions, persistence, publishing, and retention logic to the Python backend in this repository.
+
+## Why this exists
+
+Most meeting assistants are built around hosted transcription and AI services. Meeting Transcriber is designed around a different assumption: meeting audio, transcripts, summaries, and structured memory can stay on your Mac while still supporting useful workflows such as local speech-to-text, AI summarization, meeting search, persistent sessions, and multi-meeting Q&A.
+
+The project combines **SwiftUI**, **Python**, **whisper.cpp**, **Ollama**, and **ffmpeg** into a local-first workflow designed specifically for Apple Silicon.
 
 ## What it does
 
