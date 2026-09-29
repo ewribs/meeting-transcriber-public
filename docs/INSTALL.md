@@ -57,6 +57,16 @@ The main script can configure:
 - Meetings / Recordings folder;
 - Ollama model.
 
+For a fresh installation, the default data folders are:
+
+```text
+Working:               ~/Documents/Meeting Transcriber/Working
+Meetings / Recordings: ~/Documents/Meeting Transcriber/Meetings
+Archive:               ~/Documents/Meeting Transcriber/Archive
+```
+
+Existing configured paths are preserved as setup defaults when bootstrap is rerun.
+
 Interactive setup offers defaults. The same values can be supplied explicitly:
 
 ```bash
@@ -81,8 +91,26 @@ If Command Line Tools are missing, setup launches Apple's installer and asks you
 to rerun afterward.
 
 Homebrew is intentionally **not** installed automatically. If it is missing,
-setup stops and points you to `https://brew.sh` so you can inspect/install that
-third-party bootstrap yourself.
+setup stops and points you to `https://brew.sh` so you can inspect and run the
+official Homebrew installation yourself.
+
+After installing Homebrew on Apple Silicon, make sure the `brew` command is available
+in your shell. Homebrew's installer normally prints the exact commands to use. The
+standard Apple Silicon setup is:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+brew --version
+```
+
+Then rerun Meeting Transcriber's bootstrap.
+
+Apple's Xcode Command Line Tools and full Xcode are separate:
+
+- **Command Line Tools** are sufficient for setup, the Python backend, Whisper,
+  Ollama, tests, and processing existing recordings.
+- **Full Xcode** is required to build and run the native Swift application.
 
 ## Dependencies installed through Homebrew
 
@@ -131,8 +159,17 @@ brew services start ollama
 The selected model is then installed with `ollama pull` unless
 `--skip-model-pull` is supplied.
 
-The repository default is `qwen3:8b`. The native Preferences UI can select any
-compatible model discovered through `ollama list`.
+For a fresh installation, setup chooses the initial Ollama model from unified
+memory:
+
+- less than 32 GB: `qwen3:8b`
+- 32 GB or more: `qwen3:14b`
+
+The smaller model prioritizes compatibility and lower memory use. It should not be
+assumed to produce output identical in quality to the larger model.
+
+The native Preferences UI can select any compatible model discovered through
+`ollama list`.
 
 ## Configurable paths and install metadata
 

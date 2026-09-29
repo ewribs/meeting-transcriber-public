@@ -101,6 +101,14 @@ On a fresh installation, the model default is selected conservatively from unifi
 
 Already-present storage directories, Whisper model files, functional local commands, and an installed selected Ollama model are kept rather than recreated or redownloaded.
 
+The smaller `qwen3:8b` fresh-install default is intended to keep lower-memory Macs
+usable. It is a compatibility choice rather than a claim of output-quality parity
+with `qwen3:14b`.
+
+Apple's Xcode Command Line Tools are sufficient for setup, backend validation, and
+processing existing recordings. Full Xcode is only required when building or running
+the native Swift application.
+
 ## Storage paths
 
 Setup keeps code and user data conceptually separate. The following are
@@ -108,8 +116,19 @@ configurable:
 
 - **Project directory** — the Git checkout containing the app/backend source.
 - **Working directory** — local processing/output artifacts.
-- **Meetings / recordings directory** — configurable folder used for existing recordings and recordings created by the native app. The backend's internal `meetings/` compatibility directory remains inside the project checkout and is not a separate setup choice.
+- **Meetings / recordings directory** — configurable runtime folder used for existing recordings and recordings created by the native app.
 - **Archive directory** — published meeting archive, which may be local or a NAS mount.
+
+Fresh-install defaults are:
+
+```text
+Working:               ~/Documents/Meeting Transcriber/Working
+Meetings / Recordings: ~/Documents/Meeting Transcriber/Meetings
+Archive:               ~/Documents/Meeting Transcriber/Archive
+```
+
+The Python runtime honors these configured storage paths; they are not required to
+live inside the Git checkout.
 
 The native Swift app no longer needs the repository to live at one fixed path.
 It resolves the project location in this order:
@@ -132,9 +151,19 @@ be available.
 
 Meeting Transcriber does not bootstrap Homebrew automatically. Homebrew's
 installation mechanism is third-party remote code, so users are directed to the
-official Homebrew site and can inspect/install it themselves. Once `brew` exists,
-the Meeting Transcriber script runs explicit, visible `brew install` commands for
-the declared dependencies.
+official Homebrew site and can inspect/install it themselves.
+
+On Apple Silicon, Homebrew normally installs under `/opt/homebrew`. After installation,
+the user may need to add Homebrew to the shell environment using the commands printed
+by Homebrew, commonly:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+Once `brew` exists, the Meeting Transcriber script runs explicit, visible
+`brew install` commands for the declared dependencies.
 
 ## Whisper model download
 

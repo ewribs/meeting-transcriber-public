@@ -51,6 +51,17 @@ find the Python backend wherever you install it.
 
 For a new Mac:
 
+1. Install Apple's Xcode Command Line Tools if needed:
+
+```bash
+xcode-select --install
+```
+
+2. Install Homebrew manually from [brew.sh](https://brew.sh). Meeting Transcriber's
+   setup deliberately does not install Homebrew for you.
+
+3. Clone and bootstrap Meeting Transcriber:
+
 ```bash
 git clone https://github.com/ewribs/meeting-transcriber-public.git ~/Projects/meeting-transcriber
 cd ~/Projects/meeting-transcriber
@@ -58,9 +69,19 @@ cd ~/Projects/meeting-transcriber
 ./tools/setup/bootstrap_macos.sh
 ```
 
-The setup is intentionally reviewable and supports configurable Working, Archive, and
-Meetings / Recordings locations. Read [Installation](docs/INSTALL.md) and
+Fresh installs default to:
+
+- Working: `~/Documents/Meeting Transcriber/Working`
+- Meetings / Recordings: `~/Documents/Meeting Transcriber/Meetings`
+- Archive: `~/Documents/Meeting Transcriber/Archive`
+
+All three locations are configurable.
+
+The setup is intentionally reviewable. Read [Installation](docs/INSTALL.md) and
 [Setup & Security Transparency](docs/SETUP_AND_SECURITY.md) before running it.
+
+The Command Line Tools are sufficient for setup and backend processing of existing
+recordings. Full Xcode is required to build and run the native Swift app.
 
 Then:
 

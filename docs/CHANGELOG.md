@@ -38,6 +38,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 - Clarified the SwiftUI/Python boundary in project documentation: Swift owns the native app experience while Python remains the source of truth for transcription, AI, memory, sessions, persistence, and publishing.
 
 ### Fixed
+- Fixed fresh installations ignoring the configured Meetings / Recordings directory during transcription preflight and runtime processing.
 - Stabilized grounded meeting-memory and summary composition so precision-sensitive sections are sourced from structured evidence rather than free-form narrative output.
 - Fixed explicit decision recovery for vendor-removal decisions and semantic deduplication of repeated decision fragments.
 - Prevented malformed or rhetorical questions from being promoted into authoritative open questions.
