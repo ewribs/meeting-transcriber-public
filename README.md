@@ -45,19 +45,30 @@ For privacy-safe sharing and public-release preparation, see the [Public Release
 
 ## Quick start
 
-This project currently expects to live at:
+Meeting Transcriber no longer requires one fixed repository path. The macOS
+bootstrap records the chosen checkout in Application Support so the Swift app can
+find the Python backend wherever you install it.
 
-```text
-~/Projects/meeting-transcriber
+For a new Mac:
+
+```bash
+git clone https://github.com/ewribs/meeting-transcriber-public.git ~/Projects/meeting-transcriber
+cd ~/Projects/meeting-transcriber
+./tools/setup/bootstrap_macos.sh --dry-run
+./tools/setup/bootstrap_macos.sh
 ```
 
-That path is used by the native app when launching the Python backend.
+The setup is intentionally reviewable and supports configurable Working, Archive, and
+Meetings / Recordings locations. Read [Installation](docs/INSTALL.md) and
+[Setup & Security Transparency](docs/SETUP_AND_SECURITY.md) before running it.
 
-1. Follow the full [Installation Guide](docs/INSTALL.md).
-2. Open `swift/Meeting Transcriber/Meeting Transcriber.xcodeproj` in Xcode.
-3. Build and run **Meeting Transcriber**.
-4. Open **Settings → Meeting Transcriber Settings** and configure storage, Ollama model, performance profile, and retention.
-5. Verify the **Transcribe** input monitor sees the expected five-channel device before recording.
+Then:
+
+1. Open `swift/Meeting Transcriber/Meeting Transcriber.xcodeproj` in Xcode.
+2. Build and run **Meeting Transcriber**.
+3. Review **Settings → Meeting Transcriber Settings**.
+4. Use an existing recording immediately, or configure the optional five-channel
+   **Transcribe** input if you want native recording.
 
 ## Workspaces
 
@@ -82,7 +93,8 @@ meeting-transcriber/
 │   ├── backfill/                # one-off historical backfills
 │   ├── diagnostics/             # manual smoke/diagnostic scripts
 │   ├── maintenance/             # maintenance/audit utilities
-│   └── query/                   # optional command-line query tools
+│   ├── query/                   # optional command-line query tools
+│   └── setup/                   # transparent macOS install/validation tools
 ├── swift/Meeting Transcriber/   # supported native macOS app
 ├── legacy/qt/                   # retired PySide/Qt front end
 └── docs/
@@ -108,6 +120,7 @@ See [Development](docs/DEVELOPMENT.md) for test and contribution guidance.
 ## Documentation
 
 - [Installation Guide](docs/INSTALL.md)
+- [Setup & Security Transparency](docs/SETUP_AND_SECURITY.md)
 - [User Guide](docs/USER_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Development Guide](docs/DEVELOPMENT.md)

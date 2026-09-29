@@ -6,7 +6,13 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+- Changed setup bootstrap to preserve existing setup paths/models by default, choose a hardware-aware model only for fresh installs, and avoid reinstalling functional local dependencies.
+
 ### Added
+- Added a transparent macOS setup/validation workflow with dry-run/check modes, configurable storage/model paths, documented network actions, safe Application Support configuration backups, and optional Xcode build validation.
+- Added install metadata so the Swift app can locate the Python backend from a configurable repository directory instead of requiring one fixed checkout path.
+- Added configurable Working, Archive, and Meetings / Recordings paths.
+- Added `docs/SETUP_AND_SECURITY.md` documenting exactly what setup installs, changes, downloads, and does not upload.
 - Added a dry-run-first private-to-public synchronization helper with public-only file preservation, transient-file exclusion, candidate validation, and post-sync validation.
 - Added a repeatable public-release export builder that strips private/per-user state, rewrites public-safe bundle identifiers, and requires a clean release audit.
 - Added a tracked-file public-release audit scanner with optional Git-ignored sensitive-literal denylist support.

@@ -1,103 +1,120 @@
 # Installation Guide
 
-This guide describes the current development installation for Meeting Transcriber on Apple Silicon macOS.
+Meeting Transcriber supports Apple Silicon macOS and is designed to run its
+transcription and AI workloads locally.
 
-## 1. Requirements
+For a line-by-line explanation of what setup changes and what it contacts, read
+[Setup & Security Transparency](SETUP_AND_SECURITY.md) before running anything.
 
-Meeting Transcriber currently assumes:
+## Recommended installation flow
 
-- Apple Silicon Mac.
-- macOS with microphone access available to the built app.
-- Xcode capable of opening the project under `swift/Meeting Transcriber/`.
-- Homebrew.
-- Python 3 with `venv` support.
-- `ffmpeg` / `ffprobe`.
-- `whisper.cpp` and `whisper-cli`.
-- Ollama with at least one compatible local model installed.
-- A macOS audio input named **Transcribe** exposing at least five input channels if you want to use native recording.
+The public project is designed to support a review-first setup:
 
-The supported Swift app currently looks for the repository and Python environment at fixed paths:
+1. Obtain the public repository or download the small GitHub installer script.
+2. Read the setup scripts.
+3. Run `--dry-run`.
+4. Run the bootstrap.
+5. Build the native app in Xcode.
+6. Validate with an existing recording; the native multi-channel microphone setup
+   is optional unless you want to record directly in Meeting Transcriber.
 
-```text
-~/Projects/meeting-transcriber
-~/Projects/meeting-transcriber/.venv/bin/python
-```
-
-Clone or place the project there unless `BackendService.swift` is changed accordingly.
-
-## 2. Install Homebrew dependencies
-
-Install the external command-line dependencies:
+## Option A — clone the public repository yourself
 
 ```bash
-brew install ffmpeg
-brew install whisper-cpp
-brew install ollama
-```
-
-Verify them:
-
-```bash
-ffmpeg -version
-ffprobe -version
-/opt/homebrew/bin/whisper-cli --help | head
-ollama list
-```
-
-The backend currently resolves `whisper-cli` at:
-
-```text
-/opt/homebrew/bin/whisper-cli
-```
-
-## 3. Create the Python environment
-
-From the repository root:
-
-```bash
+git clone https://github.com/ewribs/meeting-transcriber-public.git ~/Projects/meeting-transcriber
 cd ~/Projects/meeting-transcriber
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+less tools/setup/bootstrap_macos.sh
+./tools/setup/bootstrap_macos.sh --dry-run
+./tools/setup/bootstrap_macos.sh
 ```
 
-The current Python runtime dependency is `Markdown`; most backend code otherwise uses the standard library and external local processes/services.
+The install directory is no longer required to be
+`~/Projects/meeting-transcriber`; that is simply a convenient example/default.
 
-## 4. Install the Whisper model
+## Option B — reviewed GitHub clone helper
 
-The current configuration expects the English medium model here:
+`tools/setup/install_from_github.sh` can clone the public repository into a
+chosen directory and then run the same bootstrap. If using a copy of that script
+outside an existing checkout, inspect it before running it.
+
+Example:
+
+```bash
+bash install_from_github.sh \
+  --install-dir "$HOME/Projects/meeting-transcriber" \
+  --dry-run
+```
+
+Then rerun without `--dry-run` when satisfied.
+
+## What the bootstrap configures
+
+The main script can configure:
+
+- project/repository location;
+- Working/output folder;
+- Archive folder or NAS path;
+- Meetings / Recordings folder;
+- Ollama model.
+
+Interactive setup offers defaults. The same values can be supplied explicitly:
+
+```bash
+./tools/setup/bootstrap_macos.sh \
+  --working-dir "$HOME/Documents/Meeting Transcriber/Working" \
+  --archive-dir "/Volumes/Transcribe" \
+  --recordings-dir "$HOME/Documents/Meeting Transcriber/Meetings" \
+  --llm-model "qwen3:8b"
+```
+
+For scripted/headless setup, add `--non-interactive`.
+
+## System prerequisites
+
+Bootstrap expects:
+
+- Apple Silicon macOS;
+- Apple's Xcode Command Line Tools;
+- Homebrew.
+
+If Command Line Tools are missing, setup launches Apple's installer and asks you
+to rerun afterward.
+
+Homebrew is intentionally **not** installed automatically. If it is missing,
+setup stops and points you to `https://brew.sh` so you can inspect/install that
+third-party bootstrap yourself.
+
+## Dependencies installed through Homebrew
+
+The bootstrap checks/installs these explicit formulas:
 
 ```text
-~/whisper/models/ggml-medium.en.bin
+python@3.13
+ffmpeg
+whisper.cpp
+ollama
 ```
 
-Create the model directory if needed:
+It then creates `.venv` under the repository and installs the Python requirements
+from `requirements.txt`.
 
-```bash
-mkdir -p ~/whisper/models
+## Whisper
+
+Meeting Transcriber currently expects:
+
+```text
+whisper-cli: /opt/homebrew/bin/whisper-cli
+model:       ~/whisper/models/ggml-medium.en.bin
 ```
 
-Install/download the `whisper.cpp` `medium.en` model using the method supported by your installed `whisper.cpp` version, then verify:
+When the model is missing, setup downloads it directly from the documented
+`ggerganov/whisper.cpp` Hugging Face model repository. The URL is printed before
+the download begins.
 
-```bash
-ls -lh ~/whisper/models/ggml-medium.en.bin
-```
+The transcription pipeline continues to use approximately five-minute Whisper
+chunks.
 
-The processing pipeline uses approximately five-minute Whisper chunks.
-
-## 5. Install and start Ollama
-
-Start Ollama, then install at least one model that Meeting Transcriber can discover with `ollama list`.
-
-For example:
-
-```bash
-ollama pull qwen3:14b
-ollama list
-```
-
-The repository default is `qwen3:8b`, but the native Preferences UI discovers installed models and lets you select a different local model.
+## Ollama
 
 Ollama must respond locally at:
 
@@ -105,19 +122,41 @@ Ollama must respond locally at:
 http://localhost:11434
 ```
 
-## 6. Create local working folders
-
-The legacy/preflight path expects a local `meetings/` directory to exist:
+If it is installed but not responding, setup runs the visible command:
 
 ```bash
-mkdir -p ~/Projects/meeting-transcriber/meetings
-mkdir -p ~/Projects/meeting-transcriber/output
-mkdir -p ~/Projects/meeting-transcriber/logs
+brew services start ollama
 ```
 
-The native app also supports a configurable **Recordings folder** in Preferences. Set that folder before native recording.
+The selected model is then installed with `ollama pull` unless
+`--skip-model-pull` is supplied.
 
-## 7. Configure the Transcribe aggregate input
+The repository default is `qwen3:8b`. The native Preferences UI can select any
+compatible model discovered through `ollama list`.
+
+## Configurable paths and install metadata
+
+Setup writes local configuration under:
+
+```text
+~/Library/Application Support/Meeting Transcriber/
+```
+
+`install.json` records the repository location so the Swift app can find the
+Python backend from an arbitrary install directory.
+
+`settings.json` contains application preferences including Working, Archive,
+Meetings / Recordings, model, performance profile, and retention values.
+
+Existing files are backed up before setup changes them.
+
+The Swift backend path resolution order is:
+
+1. explicit `MEETING_TRANSCRIBER_PROJECT_DIR` environment variable;
+2. the path in Application Support `install.json`;
+3. historical fallback `~/Projects/meeting-transcriber`.
+
+## Native recording / Audio MIDI Setup
 
 Native recording expects an input device named exactly:
 
@@ -125,17 +164,18 @@ Native recording expects an input device named exactly:
 Transcribe
 ```
 
-The recording contract is:
+The five-channel contract is:
 
 - Remote audio: aggregate channel 1 (`c0`).
 - Microphone audio: aggregate channel 5 (`c4`).
 - At least five input channels total.
 
-Use **Audio MIDI Setup** in macOS to create/configure the aggregate device so the remote source and microphone land in those channel positions. The app's Transcribe input monitor reports whether the device exposes the expected five-channel layout.
+This hardware is **not required to validate the rest of the application**. A
+headless or secondary Mac can process existing M4A files without Scarlett/mic
+hardware. Setup validation therefore treats a missing `Transcribe` device as a
+warning.
 
-The finalized meeting recording is a five-channel AAC/M4A preserving the channel order used by the Python transcription pipeline.
-
-## 8. Build the native app
+## Build the native app
 
 Open:
 
@@ -146,107 +186,97 @@ swift/Meeting Transcriber/Meeting Transcriber.xcodeproj
 In Xcode:
 
 1. Select the **Meeting Transcriber** scheme.
-2. Choose the local Mac as the run destination.
+2. Choose the local Mac as the destination.
 3. Build and Run.
-4. Grant microphone permission when prompted.
-5. Grant access to configured network/archive volumes when macOS asks.
+4. Grant permissions when macOS requests them.
+5. Review **Meeting Transcriber Settings** and confirm storage/model/profile.
 
-The app invokes `backend_bridge.py` using `.venv/bin/python` from the repository root.
-
-## 9. First-run Preferences
-
-Open **Meeting Transcriber Settings** and configure:
-
-- Output folder.
-- Archive folder / NAS path.
-- Recordings folder.
-- Ollama model.
-- Performance profile.
-- Context override if intentionally needed.
-- Local and archived source-M4A retention.
-
-Recommended default for performance is **Auto**. Auto detects the Mac's hardware/memory class and resolves to Conservative, Balanced, or High Performance. The Preferences UI shows the resolved profile, effective context, and direct-context budget.
-
-## 10. Validate the backend
-
-With the virtual environment active:
+If full Xcode is already installed and selected, bootstrap can also perform a
+command-line build:
 
 ```bash
-cd ~/Projects/meeting-transcriber
-python preflight.py
+./tools/setup/bootstrap_macos.sh --build-swift
 ```
 
-Preflight checks the local meeting directory, output directory, `ffmpeg`, `whisper-cli`, Whisper model, Ollama service, and selected model.
+## Validate the installation
 
-Run the automated Python suite:
+Read-only validation:
 
 ```bash
-python -m unittest discover -s tests -p 'test_*.py' -v
+./tools/setup/bootstrap_macos.sh --check
 ```
+
+Or directly:
+
+```bash
+.venv/bin/python tools/setup/validate_install.py --run-tests
+```
+
+The validator checks the project path, virtualenv, ffmpeg/ffprobe, whisper-cli,
+Whisper model, Ollama API/model, storage paths, backend import, Xcode project,
+and optional Transcribe audio device.
+
+## Run the Python test suite directly
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+## Private local context
+
+Optional user identity and business vocabulary stay out of Git:
+
+- `identity.local.json`
+- `business_context.local.json`
+- `known_people.local.json` / `known_people.json`
+
+Example templates remain in the repository. These local files are not created
+with personal content automatically by the installer.
 
 ## Troubleshooting
 
-### The native app says the project or Python environment is missing
+### App says project or Python environment is missing
 
-Confirm both exist exactly here:
+Check:
 
 ```text
-~/Projects/meeting-transcriber
-~/Projects/meeting-transcriber/.venv/bin/python
+~/Library/Application Support/Meeting Transcriber/install.json
+<configured-project>/.venv/bin/python
 ```
 
-### The Transcribe input is missing
-
-Open Audio MIDI Setup and confirm an input device named `Transcribe` exists. The native recorder intentionally selects that name rather than an arbitrary microphone.
-
-### The input monitor works but recording is rejected
-
-The aggregate device must expose at least five channels with Remote on `c0` and Mic on `c4`.
-
-### Ollama model is unavailable
-
-Run:
+You can temporarily override the project location when launching from a shell:
 
 ```bash
-ollama list
-```
-
-Install the desired model and use **Refresh Models** in Preferences.
-
-### Whisper cannot start
-
-Verify:
-
-```bash
-ls -l /opt/homebrew/bin/whisper-cli
-ls -lh ~/whisper/models/ggml-medium.en.bin
+export MEETING_TRANSCRIBER_PROJECT_DIR="/path/to/meeting-transcriber"
 ```
 
 ### Archive is unavailable
 
-Mount the configured archive/NAS path, then reopen Preferences or retry the operation. Publishing intentionally refuses unsafe/incomplete archive operations.
+If the archive points to `/Volumes/...`, mount that volume/NAS. Setup deliberately
+does not create a fake local mount directory when the expected volume is absent.
 
-## Private local identity configuration
-
-Meeting Transcriber keeps the local user's real name and self-reference aliases out of source control. These values are used to distinguish the local **Mic** speaker from remote participants when extracting participants, commitments, and follow-ups.
-
-Run the interactive setup once after installation:
+### Ollama model is unavailable
 
 ```bash
-python tools/maintenance/configure_identity.py
+ollama list
+ollama pull qwen3:8b
 ```
 
-This creates `identity.local.json` in the repository root. The file is intentionally ignored by Git. `identity.example.json` documents the public-safe schema.
+Then use **Refresh Models** in Preferences.
 
-If the private file is absent, the application uses generic public-safe defaults (`User` / `Mic`). For accurate participant and commitment attribution, configure the local identity before processing real meetings.
-## Optional private business context
-
-The public application works without organization-specific mappings. If you want
-stable normalization for private supplier, project, or internal workstream aliases,
-copy `business_context.example.json` to `business_context.local.json` and replace the
-generic entries with your own values. The local file is Git-ignored and must remain
-private. You can validate it with:
+### Whisper cannot start
 
 ```bash
-python tools/maintenance/configure_business_context.py
+which whisper-cli
+ls -lh ~/whisper/models/ggml-medium.en.bin
 ```
+
+### Native recording input is missing
+
+Only the native recording workflow needs the `Transcribe` aggregate input. You
+can still test the rest of the app by adding an existing compatible recording.
+
+
+### Fresh-install model default
+
+When no existing Meeting Transcriber settings are present, bootstrap selects the initial Ollama model conservatively from detected unified memory: 32 GB or more defaults to `qwen3:14b`; smaller Macs default to `qwen3:8b`. Existing installations keep their configured model unless the user explicitly chooses another one.

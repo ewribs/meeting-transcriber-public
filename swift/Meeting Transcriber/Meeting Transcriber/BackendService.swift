@@ -111,18 +111,82 @@ nonisolated private final class BackendProcessHandle:
 
 
 nonisolated struct BackendService: Sendable {
+    private struct InstallConfig: Decodable {
+        let projectDir: String
+
+        enum CodingKeys: String, CodingKey {
+            case projectDir = "project_dir"
+        }
+    }
+
     private let projectDirectory: URL
     private let processHandle =
         BackendProcessHandle()
 
     init() {
-        let username = NSUserName()
+        self.projectDirectory =
+            Self.resolveProjectDirectory()
+    }
 
-        self.projectDirectory = URL(
-            fileURLWithPath:
-                "/Users/\(username)/Projects/meeting-transcriber",
-            isDirectory: true
-        )
+    private static func resolveProjectDirectory() -> URL {
+        let environment =
+            ProcessInfo.processInfo.environment
+
+        if let override = environment[
+            "MEETING_TRANSCRIBER_PROJECT_DIR"
+        ]?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !override.isEmpty {
+            return URL(
+                fileURLWithPath:
+                    (override as NSString)
+                        .expandingTildeInPath,
+                isDirectory: true
+            )
+        }
+
+        let supportDirectory =
+            FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first
+
+        if let configURL = supportDirectory?
+            .appendingPathComponent(
+                "Meeting Transcriber",
+                isDirectory: true
+            )
+            .appendingPathComponent(
+                "install.json"
+            ),
+            let data = try? Data(
+                contentsOf: configURL
+            ),
+            let config = try? JSONDecoder()
+                .decode(
+                    InstallConfig.self,
+                    from: data
+                ),
+            !config.projectDir
+                .trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                .isEmpty
+        {
+            return URL(
+                fileURLWithPath:
+                    (config.projectDir as NSString)
+                        .expandingTildeInPath,
+                isDirectory: true
+            )
+        }
+
+        return FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent(
+                "Projects/meeting-transcriber",
+                isDirectory: true
+            )
     }
 
     func loadPreferences()

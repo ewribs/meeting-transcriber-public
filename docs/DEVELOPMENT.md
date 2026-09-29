@@ -50,6 +50,19 @@ Build the **Meeting Transcriber** target and run the available unit/UI tests fro
 
 ## Tools
 
+### Setup tooling
+
+macOS bootstrap and installation validation live under:
+
+```text
+tools/setup/
+```
+
+Setup changes must remain reviewable and non-obfuscated. Preserve `--dry-run` and
+read-only validation behavior, document every external network dependency, avoid
+implicit privilege escalation, and keep installer configuration writes covered by
+automated tests. See `docs/SETUP_AND_SECURITY.md`.
+
 ### Diagnostics
 
 Manual smoke tests live in:

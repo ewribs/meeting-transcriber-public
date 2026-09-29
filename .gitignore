@@ -15,6 +15,9 @@ logs/
 .vscode/
 .idea/
 
+# Build output
+.build/
+
 # Xcode user-specific state
 xcuserdata/
 *.xcuserstate

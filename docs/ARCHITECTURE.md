@@ -21,7 +21,7 @@ The main workspaces are:
 - Sessions
 - Search
 
-`BackendService.swift` launches the Python bridge at `backend_bridge.py` using the repository's `.venv/bin/python`. It currently assumes the repository is at `~/Projects/meeting-transcriber`.
+`BackendService.swift` launches the Python bridge at `backend_bridge.py` using the repository's `.venv/bin/python`. The repository location is resolved from `MEETING_TRANSCRIBER_PROJECT_DIR`, then Application Support `install.json`, with `~/Projects/meeting-transcriber` retained only as a compatibility fallback.
 
 ## Python bridge
 
@@ -76,6 +76,20 @@ Auto chooses a tier primarily from detected unified memory. A context-size overr
 The `query/` package contains multi-meeting selection, pruning, execution, synthesis, change analysis, session context, rendering, and chat helpers.
 
 Saved sessions persist meeting selection/criteria plus conversation history. The Swift app loads and continues those sessions through backend-bridge commands; Python remains authoritative for persistence.
+
+## Installation metadata
+
+The native app needs to locate the Python checkout before it can call the backend.
+Setup writes a small non-secret file at:
+
+```text
+~/Library/Application Support/Meeting Transcriber/install.json
+```
+
+It contains the configured `project_dir`. Application preferences remain in the
+separate `settings.json` file in the same Application Support directory. This
+keeps install location separate from meeting/runtime settings and lets the public
+installer support arbitrary checkout locations.
 
 ## Storage model
 
