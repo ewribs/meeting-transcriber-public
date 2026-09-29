@@ -38,6 +38,30 @@ TRANSIENT_EXCLUDES = (
 )
 
 
+def extract_zip_preserving_permissions(
+    archive: Path,
+    destination: Path,
+) -> None:
+    """Extract a ZIP while restoring Unix permission bits.
+
+    The sanitized release ZIP carries executable bits in ZipInfo.external_attr.
+    Restore them explicitly so rsync receives the same modes that were tracked
+    in the private repository.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            extracted = Path(zf.extract(info, destination))
+
+            if not extracted.exists() or extracted.is_symlink():
+                continue
+
+            mode = (info.external_attr >> 16) & 0o7777
+            if mode:
+                extracted.chmod(mode)
+
+
 def run(
     cmd: list[str],
     cwd: Path,
@@ -261,8 +285,10 @@ def main(argv: list[str] | None = None) -> int:
 
         candidate.mkdir()
 
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(candidate)
+        extract_zip_preserving_permissions(
+            archive,
+            candidate,
+        )
 
         validate_candidate(candidate)
 

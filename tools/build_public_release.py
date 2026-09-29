@@ -34,6 +34,31 @@ def run(cmd: list[str], cwd: Path) -> None:
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
+def extract_zip_preserving_permissions(
+    archive: Path,
+    destination: Path,
+) -> None:
+    """Extract a ZIP while restoring Unix permission bits.
+
+    Python's ZipFile.extractall() does not reliably restore executable bits.
+    Git archives preserve those bits in ZipInfo.external_attr, so restore them
+    explicitly after extraction. This keeps executable setup/tools executable
+    in the sanitized public release instead of silently flattening them to 0644.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            extracted = Path(zf.extract(info, destination))
+
+            if not extracted.exists() or extracted.is_symlink():
+                continue
+
+            mode = (info.external_attr >> 16) & 0o7777
+            if mode:
+                extracted.chmod(mode)
+
+
 def public_bundle_id(original: str, prefix: str) -> str:
     if original.endswith("UITests"):
         return f"{prefix}.MeetingTranscriberUITests"
@@ -171,8 +196,10 @@ def main(argv: list[str] | None = None) -> int:
             ROOT,
         )
 
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(tree)
+        extract_zip_preserving_permissions(
+            archive,
+            tree,
+        )
 
         remove_private_release_state(tree)
         rewrite_bundle_ids(tree, args.bundle_prefix)
