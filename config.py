@@ -64,7 +64,11 @@ ONENOTE_IMPORT_DIR = (
     ARCHIVE_DIR / "OneNote_Import"
 )
 
-MEETINGS_DIR = PROJECT_DIR / "meetings"
+MEETINGS_DIR = Path(
+    _APP_SETTINGS.get("recordings_dir")
+    or (PROJECT_DIR / "meetings")
+).expanduser()
+
 LOGS_DIR = PROJECT_DIR / "logs"
 PROMPTS_DIR = PROJECT_DIR / "prompts"
 
