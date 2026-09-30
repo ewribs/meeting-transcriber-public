@@ -71,6 +71,8 @@ Auto chooses a tier primarily from detected unified memory. A context-size overr
 
 `query/execution.py` and related query modules decide whether a workload can run directly or should be chunked.
 
+Local inference is routed through `llm_backend.py`. Ollama remains the portable/default backend. An MLX backend is available as an opt-in path and is loaded lazily so installations that do not use MLX do not require MLX dependencies. Backend selection does not alter recording, transcription, grounding, or publishing semantics.
+
 ## Query/session architecture
 
 The `query/` package contains multi-meeting selection, pruning, execution, synthesis, change analysis, session context, rendering, and chat helpers.

@@ -9,6 +9,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 - Changed setup bootstrap to preserve existing setup paths/models by default, choose a hardware-aware model only for fresh installs, and avoid reinstalling functional local dependencies.
 
 ### Added
+- Added a pluggable local inference backend boundary with Ollama remaining the default and an opt-in MLX backend for higher-memory Apple Silicon systems.
 - Added a transparent macOS setup/validation workflow with dry-run/check modes, configurable storage/model paths, documented network actions, safe Application Support configuration backups, and optional Xcode build validation.
 - Added install metadata so the Swift app can locate the Python backend from a configurable repository directory instead of requiring one fixed checkout path.
 - Added configurable Working, Archive, and Meetings / Recordings paths.

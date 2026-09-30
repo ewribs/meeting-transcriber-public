@@ -14,8 +14,11 @@ from query.execution import (
     get_execution_profile,
 )
 from config import (
+    LLM_BACKEND,
     LLM_CONTEXT_SIZE,
     LLM_MODEL,
+    MLX_MAX_TOKENS,
+    MLX_MODEL,
     PERFORMANCE_PROFILE,
     OLLAMA_URL,
     SELF_NAME,
@@ -23,7 +26,9 @@ from config import (
     SELF_SPEAKER_LABEL,
     TOPIC_NORMALIZATION_RULES,
 )
+from llm_backend import create_backend, normalize_backend_name
 
+_last_llm_backend = None
 _last_llm_elapsed_seconds: float | None = None
 
 
@@ -135,71 +140,61 @@ Formatting Rules
 """
 
 
+def _get_llm_backend():
+    """Create the configured inference backend. Cache MLX model weights only."""
+    global _last_llm_backend
+
+    if normalize_backend_name(LLM_BACKEND) == "ollama":
+        return create_backend(
+            "ollama",
+            ollama_model=LLM_MODEL,
+            ollama_url=OLLAMA_URL,
+            context_size=LLM_CONTEXT_SIZE,
+            mlx_model=MLX_MODEL,
+            mlx_max_tokens=MLX_MAX_TOKENS,
+            ollama_urlopen=urllib.request.urlopen,
+        )
+
+    if _last_llm_backend is None:
+        _last_llm_backend = create_backend(
+            "mlx",
+            ollama_model=LLM_MODEL,
+            ollama_url=OLLAMA_URL,
+            context_size=LLM_CONTEXT_SIZE,
+            mlx_model=MLX_MODEL,
+            mlx_max_tokens=MLX_MAX_TOKENS,
+        )
+    return _last_llm_backend
+
+
+def get_active_llm_backend_name() -> str:
+    """Return the normalized configured backend without loading a model."""
+    return normalize_backend_name(LLM_BACKEND)
+
+
+def get_active_llm_model_name() -> str:
+    """Return the model identifier associated with the configured backend."""
+    if get_active_llm_backend_name() == "mlx":
+        return MLX_MODEL
+    return LLM_MODEL
+
+
 def ask_llm(
     prompt: str,
     response_format=None,
     *,
     timeout_seconds: float | None = None,
 ) -> str:
-    """
-    Send a prompt to the configured local language model
-    and return its response.
-    """
-
-    payload = {
-        "model": LLM_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,
-    }
-
-    if LLM_CONTEXT_SIZE > 0:
-        payload["options"] = {
-            "num_ctx": LLM_CONTEXT_SIZE,
-        }
-
-    if response_format is not None:
-        payload["format"] = response_format
-
-    request = urllib.request.Request(
-        OLLAMA_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    """Send a prompt through the configured local inference backend."""
+    backend = _get_llm_backend()
+    response_text = backend.generate(
+        prompt,
+        response_format=response_format,
+        timeout_seconds=timeout_seconds,
     )
-
-    start = time.perf_counter()
-
-    effective_timeout = (
-        float(timeout_seconds)
-        if timeout_seconds is not None
-        else 120.0
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=effective_timeout,
-        ) as response:
-            result = json.loads(
-                response.read().decode("utf-8")
-            )
-
-    except urllib.error.URLError as error:
-        raise RuntimeError(
-            f"Could not connect to Ollama at {OLLAMA_URL}: {error}"
-        ) from error
 
     global _last_llm_elapsed_seconds
-    _last_llm_elapsed_seconds = (
-        time.perf_counter() - start
-    )
-
-    response_text = result.get("response", "").strip()
-
-    if not response_text:
-        raise RuntimeError("Ollama returned an empty response.")
-
+    _last_llm_elapsed_seconds = backend.last_elapsed_seconds
     return response_text
 
 
@@ -3779,7 +3774,8 @@ def summarize_meeting_hardware_aware(
             else profile.resolved_name
         ),
         "context_size_tokens": int(profile.context_size_tokens),
-        "ai_model": LLM_MODEL,
+        "ai_model": get_active_llm_model_name(),
+        "ai_backend": get_active_llm_backend_name(),
     }
     return summary, metadata
 

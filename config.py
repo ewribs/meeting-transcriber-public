@@ -88,6 +88,18 @@ WHISPER_CHUNK_MINUTES = 5
 # ---------------------------------------------------------
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
+LLM_BACKEND = str(
+    _APP_SETTINGS.get("llm_backend")
+    or "ollama"
+).strip().lower()
+MLX_MODEL = str(
+    _APP_SETTINGS.get("mlx_model")
+    or "Qwen/Qwen3-30B-A3B-MLX-6bit"
+).strip()
+MLX_MAX_TOKENS = int(
+    _APP_SETTINGS.get("mlx_max_tokens")
+    or 3000
+)
 LLM_MODEL = str(
     _APP_SETTINGS.get("llm_model")
     or "qwen3:8b"

@@ -28,6 +28,12 @@ class AppSettingsTests(unittest.TestCase):
             settings["llm_model"],
             "qwen3:8b",
         )
+        self.assertEqual(settings["llm_backend"], "ollama")
+        self.assertEqual(
+            settings["mlx_model"],
+            "Qwen/Qwen3-30B-A3B-MLX-6bit",
+        )
+        self.assertEqual(settings["mlx_max_tokens"], 3000)
         self.assertEqual(
             settings["llm_context_size"],
             0,
