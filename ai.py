@@ -409,6 +409,10 @@ Rules:
 - Use decision only for an explicit decision or agreement.
 - Use commitment only when someone explicitly agrees to do
   something.
+- A conditional offer to help (for example, "if you need help, I can help")
+  is not a commitment unless a concrete deliverable is actually assigned
+  and accepted.
+- Do not treat low-information or unintelligible speech as a commitment.
 - Maximum 12 items.
 - Deduplicate overlapping evidence.
 - Omit unrelated side discussion.
@@ -1369,6 +1373,107 @@ _RISK_NEGATION_PATTERN = re.compile(
 )
 
 
+_NON_ACTIONABLE_COMMITMENT_PATTERN = re.compile(
+    r"^\s*(?:(?:yeah|yes|yep|sure|okay|ok)[, .!-]*)?"
+    r"(?:(?:i|we)\s*(?:will|['’]ll)|i\s+can)\s+"
+    r"(?:be\s+there|be\s+available|make\s+it|join(?:\s+.{1,80})?|"
+    r"attend(?:\s+.{1,80})?)"
+    r"(?:[, .!-]*(?:yeah|yes|yep|sure|okay|ok))?[, .!-]*\s*$",
+    flags=re.IGNORECASE,
+)
+
+_CONDITIONAL_OFFER_COMMITMENT_PATTERN = re.compile(
+    r"\bif\b.{0,140}?"
+    r"(?:"
+    r"\b(?:i|we)\s+(?:can|could|would)\s+(?:help|assist|support)\b"
+    r"|\b(?:you|they|we)\s+(?:need|want)\b.{0,80}?"
+    r"(?:\b(?:i|we)\s*(?:will|['’]ll|can|could)\b|\blet\s+me\b)"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+_LOW_INFORMATION_COMMITMENT_PATTERN = re.compile(
+    r"\((?:indistinct|inaudible|unintelligible|crosstalk|static[^)]*)\)"
+    r"|\b(?:indistinct|inaudible|unintelligible)\b",
+    flags=re.IGNORECASE,
+)
+
+_GENERIC_COMMITMENT_CONTINUATION_PATTERN = re.compile(
+    r"^\s*(?:(?:yeah|yes|yep|sure|okay|ok)[, .!-]*)?"
+    r"(?:i\s*(?:will|['’]ll)|let\s+me)\s+"
+    r"(?:take\s+care\s+of\s+(?:it|that)|handle\s+(?:it|that)|"
+    r"do\s+(?:it|that)|follow\s+up\s+on\s+(?:it|that))"
+    r"[, .!-]*\s*$",
+    flags=re.IGNORECASE,
+)
+
+
+def _commitment_is_actionable(action: str, evidence: str) -> bool:
+    """Reject chatter and conditional offers that do not create assigned work."""
+
+    if not action or not evidence:
+        return False
+    evidence = evidence.strip()
+    if _NON_ACTIONABLE_COMMITMENT_PATTERN.fullmatch(evidence):
+        return False
+    if _CONDITIONAL_OFFER_COMMITMENT_PATTERN.search(evidence):
+        return False
+    if _LOW_INFORMATION_COMMITMENT_PATTERN.search(evidence):
+        return False
+    if re.search(
+        r"\b(?:i|we)\s*(?:will|['’]ll)\s+(?:touch\s+base|follow\s+up)\s+"
+        r"(?:on|with|about|for)\s*$",
+        evidence,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    return True
+
+
+def _merge_adjacent_commitments(commitments: list[dict], transcript: str) -> list[dict]:
+    """Merge a nearby anaphoric continuation into the preceding commitment.
+
+    A model can split one natural commitment such as "I'll notify the team.
+    I'll take care of it." into two action items.  Merge only when the second
+    quote is a generic pronoun-based continuation, the owner matches, and both
+    quotes occur close together in the transcript.
+    """
+
+    merged: list[dict] = []
+    for candidate in commitments:
+        if not merged:
+            merged.append(candidate)
+            continue
+
+        previous = merged[-1]
+        candidate_evidence = str(candidate.get("evidence", "")).strip()
+        previous_evidence = str(previous.get("evidence", "")).strip()
+        same_owner = str(candidate.get("owner", "")).casefold() == str(
+            previous.get("owner", "")
+        ).casefold()
+
+        if (
+            same_owner
+            and _GENERIC_COMMITMENT_CONTINUATION_PATTERN.fullmatch(candidate_evidence)
+            and previous_evidence
+        ):
+            previous_pos = transcript.find(previous_evidence)
+            candidate_pos = transcript.find(candidate_evidence, max(0, previous_pos))
+            if (
+                previous_pos >= 0
+                and candidate_pos >= 0
+                and 0 <= candidate_pos - (previous_pos + len(previous_evidence)) <= 120
+            ):
+                span = transcript[previous_pos:candidate_pos + len(candidate_evidence)].strip()
+                previous["action"] = span
+                previous["evidence"] = span
+                continue
+
+        merged.append(candidate)
+
+    return merged
+
+
 def _risk_is_supported(risk: str, evidence: str) -> bool:
     """Require an explicit, non-negated risk/concern statement and lexical support."""
 
@@ -1388,23 +1493,254 @@ def _risk_is_supported(risk: str, evidence: str) -> bool:
 
 
 def _is_well_formed_question(question: str) -> bool:
-    """Reject ASR fragments and rhetorical confirmation questions."""
+    """Reject ASR fragments, speaker-boundary spill, and conversational checks."""
 
-    words = re.findall(r"[A-Za-z0-9&'-]+", question)
-    if len(words) < 4:
+    text = str(question or "").strip()
+    if not text:
         return False
     if re.search(
-        r"^\s*(?:who|what|when|where|why|how)\s+"
-        r"(?:did|does|do|is|are|was|were|can|could|will|would|should)\s*,",
-        question,
+        r"\[\d{1,2}:\d{2}\]|\*\*(?:Mic|Remote)\*\*|"
+        r"\((?:static|indistinct|inaudible|unintelligible|crosstalk)[^)]*\)",
+        text,
         flags=re.IGNORECASE,
     ):
         return False
-    # Tag/confirmation questions are conversational checks, not unresolved
-    # meeting questions.  They should not become durable meeting memory.
-    if re.search(r"(?:,\s*)?(?:right|correct|okay|ok)\?\s*$", question, flags=re.IGNORECASE):
+
+    words = re.findall(r"[A-Za-z0-9&'-]+", text)
+    if len(words) < 4 or len(words) > 30:
         return False
+
+    lowered = " ".join(words).casefold()
+    if re.match(r"^(?:is|are)\s+that\s+(?:is|are)\s+that\b", lowered):
+        return False
+    if re.match(r"^is\s+it\s+fair\s+to\s+say\b", lowered):
+        return False
+
+    first = words[0].casefold()
+    wh_words = {"who", "what", "when", "where", "why", "how", "which"}
+    auxiliaries = {
+        "is", "are", "was", "were", "do", "does", "did",
+        "can", "could", "will", "would", "should",
+    }
+    if first in wh_words:
+        pass
+    elif first in auxiliaries:
+        if len(words) < 2 or words[1].casefold() not in {
+            "i", "we", "you", "they", "he", "she", "it", "there",
+            "the", "a", "an",
+        }:
+            return False
+    elif first in {"have", "has"}:
+        if len(words) < 2 or words[1].casefold() not in {
+            "i", "we", "you", "they", "he", "she", "it",
+        }:
+            return False
+    else:
+        return False
+
+    if re.search(
+        r"^\s*(?:who|what|when|where|why|how)\s+"
+        r"(?:did|does|do|is|are|was|were|can|could|will|would|should)\s*,",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    if re.search(
+        r"^\s*(?:what|why|how|when|where|who|which)\s+"
+        r"(?:is|are|do|does|did|would|could|should)\s+(?:the\s+)?"
+        r"(?:what|why|how|when|where|who|which|is|are|do|does|did)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    if re.search(r"(?:,\s*)?(?:right|correct|okay|ok)\?\s*$", text, flags=re.IGNORECASE):
+        return False
+
+    # Reject clause fragments that look interrogative only because ASR captured
+    # the tail end of a larger sentence.  Durable open questions should stand
+    # on their own without a dangling relative clause or unfinished lead-in.
+    if re.match(
+        r"^which\s+(?:would|could|should|can|will)\b",
+        lowered,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
+    if re.search(
+        r"\b(?:for|to|with|about|because|if|when|where|and|or|but|so|like)\s*$",
+        lowered,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
+    if re.search(
+        r"\bfor\s+like\s+[a-z][a-z0-9'-]*(?:ing)?\s*$",
+        lowered,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
+    # A question-shaped prefix followed by a new future-tense clause is usually
+    # transcript spill (for example, a speaker begins answering immediately).
+    if re.match(r"^(?:what|who|where|when|why|how)\s+(?:is|are|was|were)\b", lowered):
+        remainder = " ".join(words[3:]).casefold() if len(words) > 3 else ""
+        if re.search(r"\b(?:i|we|you|they|he|she)['’]ll\b", remainder):
+            return False
+
     return True
+
+
+def _question_similarity_tokens(question: str) -> set[str]:
+    """Return content tokens used to collapse near-duplicate questions."""
+
+    ignored = {
+        "a", "an", "the", "that", "this", "it", "for", "to", "of", "in",
+        "on", "and", "or", "but", "so", "just", "like", "kind", "what",
+        "which", "who", "when", "where", "why", "how", "is", "are", "was",
+        "were", "do", "does", "did", "can", "could", "will", "would",
+        "should", "have", "has", "i", "we", "you", "they", "he", "she",
+    }
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z0-9&'-]+", question)
+        if len(token) >= 3 and token.casefold() not in ignored
+    }
+
+
+def _questions_are_near_duplicates(left: str, right: str) -> bool:
+    left_tokens = _question_similarity_tokens(left)
+    right_tokens = _question_similarity_tokens(right)
+    if not left_tokens or not right_tokens:
+        return re.sub(r"\W+", "", left.casefold()) == re.sub(r"\W+", "", right.casefold())
+    overlap = len(left_tokens & right_tokens)
+    return overlap / min(len(left_tokens), len(right_tokens)) >= 0.75
+
+
+def _normalize_open_questions(questions: list[str]) -> list[str]:
+    """Keep only clean, deduplicated durable question wording."""
+
+    kept: list[str] = []
+    for raw in questions:
+        question = re.sub(r"\s+", " ", str(raw or "")).strip(" -\t")
+        if not _is_well_formed_question(question):
+            continue
+
+        duplicate_index = next(
+            (
+                index
+                for index, existing in enumerate(kept)
+                if _questions_are_near_duplicates(question, existing)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            kept.append(question)
+            continue
+
+        existing = kept[duplicate_index]
+        existing_words = len(re.findall(r"\S+", existing))
+        candidate_words = len(re.findall(r"\S+", question))
+        if candidate_words < existing_words:
+            kept[duplicate_index] = question
+
+    return kept
+
+
+_UNRESOLVED_CONTEXT_PATTERN = re.compile(
+    r"\b(?:still\s+open|open\s+question|question\s+is|unclear|not\s+clear|"
+    r"don['’]t\s+know|do\s+not\s+know|not\s+sure|not\s+knowing|"
+    r"(?:going\s+to|need\s+to|want\s+to)\s+(?:ask|request)|"
+    r"need\s+to\s+(?:confirm|validate|find\s+out|clarify)|"
+    r"want\s+to\s+(?:confirm|validate|make\s+sure|clarify)|"
+    r"not\s+addressed|hasn['’]t\s+been\s+addressed|"
+    r"have\s+yet\s+to\s+(?:determine|confirm|resolve))\b",
+    flags=re.IGNORECASE,
+)
+
+_QUESTION_START_PATTERN = re.compile(
+    r"\b(?:what|how|why|when|where|who|which)\s+"
+    r"(?:is|are|was|were|do|does|did|can|could|will|would|should|have|has)\b"
+    r"|\b(?:do|does|did|are|is|can|could|will|would|should|have|has)\s+"
+    r"(?:we|they|you|it|this|that|the)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _compact_question_clause(text: str, start: int) -> str:
+    """Return a conservative question-like clause from punctuation-light ASR."""
+
+    tail = text[start:].strip()
+    if not tail:
+        return ""
+    boundary = re.search(
+        r"[?](?:\s|$)|[.!](?:\s|$)|"
+        r"\s+(?:okay|alright|right|so|and\s+then|that['’]s\s+number\s+one|number\s+two)\b|"
+        r"\s+(?:it(?:['’]ll|\s+will)\s+be|they(?:['’]ll|\s+will)\s+be|"
+        r"we(?:['’]ll|\s+will)\s+be|i\s+(?:would\s+)?presume)\b",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    if boundary and boundary.start() > 0:
+        tail = tail[:boundary.start() + (1 if tail[boundary.start()] == "?" else 0)]
+
+    words = list(re.finditer(r"\S+", tail))
+    if len(words) > 28:
+        tail = tail[:words[27].end()]
+    return tail.strip(" -\t,.;")
+
+
+def _explicit_unresolved_question_fallbacks(chunk: str) -> list[str]:
+    """Recover only explicit questions followed by clear unresolved context.
+
+    The fallback is intentionally conservative.  It exists to recover an
+    occasional omitted business question, not to turn every interrogative
+    transcript fragment into durable meeting memory.
+    """
+
+    recovered: list[str] = []
+    for match in _QUESTION_START_PATTERN.finditer(chunk):
+        question = _compact_question_clause(chunk, match.start())
+        question = re.sub(r"\s+", " ", question).strip()
+        if not question or not _is_well_formed_question(question):
+            continue
+
+        question_end = match.start() + len(question)
+        after_end = min(len(chunk), question_end + 320)
+        after = chunk[question_end:after_end]
+
+        # A fallback question must be followed by language showing that the
+        # issue remains unresolved.  Do not borrow an unrelated uncertainty
+        # statement from before the question.
+        cue = _UNRESOLVED_CONTEXT_PATTERN.search(after)
+        if not cue:
+            continue
+
+        # Keep the unresolved cue local.  If multiple speaker boundaries occur
+        # before the cue, it is probably unrelated discussion.
+        before_cue = after[:cue.start()]
+        speaker_boundaries = re.findall(
+            r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+            before_cue,
+            flags=re.IGNORECASE,
+        )
+        if len(speaker_boundaries) > 1:
+            continue
+
+        # Do not retain an obvious immediately answered question.
+        if re.match(
+            r"^\s*(?:[,.!?-]*\s*)?(?:yes|no|yep|yeah|correct|"
+            r"it(?:['’]ll|\s+will)\s+be|it\s+(?:is|would)|"
+            r"they(?:['’]ll|\s+will)\s+be|they\s+(?:are|would)|"
+            r"we(?:['’]ll|\s+will)\s+be|we\s+(?:are|would)|"
+            r"i\s+(?:would\s+)?presume)\b",
+            after,
+            flags=re.IGNORECASE,
+        ):
+            continue
+
+        recovered.append(question)
+
+    return _normalize_open_questions(recovered)
 
 
 def _sentences_without_unsupported_actions(
@@ -1744,6 +2080,105 @@ def _deduplicate_decisions_in_context(decisions: list[dict], transcript: str) ->
     return kept
 
 
+_PRONOMINAL_REMOVAL_PATTERN = re.compile(
+    r"\b(?:drop|dropped|cut|remove|removed|exclude|excluded)\s+"
+    r"(?:them|it|him|her)\b",
+    flags=re.IGNORECASE,
+)
+
+_TOPIC_ENTITY_SUFFIXES = {
+    "renewal", "contract", "contracts", "status", "review", "reviews",
+    "evaluation", "evaluations", "replacement", "replacements", "option",
+    "options", "discussion", "discussions", "licensing", "license", "licenses",
+    "agreement", "agreements", "relationship", "relationships", "planning",
+}
+
+
+def _topic_entity_label(topic: dict) -> str:
+    """Return the entity-like portion of a topic title for decision display."""
+
+    words = re.findall(r"[A-Za-z0-9&.-]+", str(topic.get("topic", "")).strip())
+    while len(words) > 1 and words[-1].casefold() in _TOPIC_ENTITY_SUFFIXES:
+        words.pop()
+    return " ".join(words).strip()
+
+
+def _contextualize_pronominal_removal_decision(
+    item: dict, transcript: str, topics: list[dict]
+) -> dict | None:
+    """Resolve a pronoun removal only from the same local speaker turn.
+
+    A quote such as "we dropped them" is not useful or safe as durable meeting
+    memory unless the removed entity is recoverable from the same local turn.
+    Do not reach backward across speaker boundaries or distant discussion, where
+    the same phrase may refer to unrelated personal chatter.
+    """
+
+    decision = str(item.get("decision", "")).strip()
+    evidence = str(item.get("evidence", "")).strip()
+    if not evidence or not _PRONOMINAL_REMOVAL_PATTERN.search(
+        f"{decision} {evidence}"
+    ):
+        return item
+
+    pos = transcript.find(evidence)
+    if pos < 0:
+        return None
+
+    # Restrict context to the current speaker turn when transcript markers are
+    # present.  Without markers (e.g. unit tests), use a tight local window.
+    marker = re.compile(
+        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+        flags=re.IGNORECASE,
+    )
+    turn_start = 0
+    for match in marker.finditer(transcript, 0, pos):
+        turn_start = match.end()
+    next_marker = marker.search(transcript, pos + len(evidence))
+    turn_end = next_marker.start() if next_marker else len(transcript)
+
+    local_start = max(turn_start, pos - 300)
+    local_end = min(turn_end, pos + len(evidence) + 80)
+    context = transcript[local_start:local_end].casefold()
+    before_evidence = transcript[local_start:pos].casefold()
+
+    scored: list[tuple[int, int, str]] = []
+    for topic in topics:
+        if not isinstance(topic, dict):
+            continue
+        label = _topic_entity_label(topic)
+        tokens = [
+            token for token in re.findall(r"[a-z0-9]+", label.casefold())
+            if len(token) >= 4 and token not in _DECISION_STOP_WORDS
+        ]
+        if not tokens:
+            continue
+
+        # The entity must be mentioned before the pronoun in this same local
+        # turn; a later topic mention cannot retroactively resolve "them".
+        hits = [before_evidence.rfind(token) for token in tokens if token in before_evidence]
+        if not hits:
+            continue
+        nearest = max(hits)
+        distance = len(before_evidence) - nearest
+        if distance > 220:
+            continue
+        scored.append((len(hits), -distance, label))
+
+    if not scored:
+        return None
+
+    scored.sort(reverse=True)
+    best = scored[0]
+    if len(scored) > 1 and scored[1][:2] == best[:2]:
+        return None
+
+    label = best[2]
+    if not label:
+        return None
+    return {"decision": f"Drop {label}.", "evidence": evidence}
+
+
 def _topic_matches_decision(topic: dict, decision: dict) -> bool:
     topic_tokens = _meaningful_tokens(
         f"{topic.get('topic_key', '')} {topic.get('topic', '')}"
@@ -2063,18 +2498,22 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         evidence = str(item.get("evidence", "")).strip()
         if decision.casefold().rstrip(".") == evidence.casefold().rstrip("."):
             decision = _canonical_fallback_decision_text(evidence)
-        normalized_decisions.append({"decision": decision, "evidence": evidence})
+        contextualized = _contextualize_pronominal_removal_decision(
+            {"decision": decision, "evidence": evidence},
+            transcript,
+            memory.get("topics", []),
+        )
+        if contextualized is not None:
+            normalized_decisions.append(contextualized)
 
     memory["decisions"] = _deduplicate_decisions_in_context(
         normalized_decisions,
         transcript,
     )
 
-    memory["open_questions"] = [
-        question
-        for question in memory.get("open_questions", [])
-        if _is_well_formed_question(str(question))
-    ]
+    memory["open_questions"] = _normalize_open_questions(
+        [str(question) for question in memory.get("open_questions", [])]
+    )
 
     authoritative_actions = []
     for commitment in memory.get("commitments", []):
@@ -2348,6 +2787,16 @@ COMMITMENTS:
   proving the commitment.
 - Do not treat a suggestion, request, discussion, intention,
   status update, or completed action as a commitment.
+- Do not treat attendance, availability, social plans, acknowledgements,
+  conversational reassurance, or conditional offers to help as a work
+  commitment. Examples that should be omitted include "I'll be there",
+  "I can make it", "if you need help, I'll help", "let me know if you
+  need anything", and "no problem" unless the same evidence also records
+  a concrete accepted or assigned work action or deliverable.
+- Do not split one natural commitment into multiple items merely because
+  the speaker follows it with a pronoun-based continuation such as
+  "I'll take care of it" or "I'll handle that". Prefer one item with
+  enough verbatim evidence to preserve the complete commitment.
 - Do not infer an owner.
 - If the speaker's name is not explicit enough to identify
   confidently, use "Unknown".
@@ -2388,7 +2837,11 @@ RISKS AND CONCERNS:
 
 OPEN QUESTIONS:
 - Include only a question that a participant explicitly raised
-  and that remained unanswered in this section.
+  and that remained unanswered or explicitly unresolved in this section.
+- Preserve a real business question when nearby discussion says the matter
+  is still open, unclear, not addressed, or needs confirmation/validation,
+  even if the transcript punctuation is imperfect.
+- Do not retain a question that is directly answered later in the section.
 - Do not turn missing detail, uncertainty, or an analyst's desire
   for more information into a question.
 - The evidence field MUST contain the exact question copied from
@@ -2517,6 +2970,9 @@ Transcript section:
                     "",
                 )
             ).strip()
+
+            if not _commitment_is_actionable(action_text, evidence_text):
+                continue
 
             # A generated paraphrase is convenient only when it is literally
             # supported by the quote. Otherwise retain the quote itself as the
@@ -2668,6 +3124,10 @@ Transcript section:
             if grounded_question not in validated_open_questions:
                 validated_open_questions.append(grounded_question)
 
+        for fallback_question in _explicit_unresolved_question_fallbacks(chunk):
+            if fallback_question not in validated_open_questions:
+                validated_open_questions.append(fallback_question)
+
         follow_ups = result.get(
             "follow_ups",
             [],
@@ -2710,10 +3170,13 @@ Transcript section:
                 validated_follow_ups.append(grounded_follow_up)
 
     return {
-        "commitments": validated_commitments,
+        "commitments": _merge_adjacent_commitments(
+            validated_commitments,
+            transcript,
+        ),
         "decisions": _deduplicate_decisions(validated_decisions),
         "risks": validated_risks,
-        "open_questions": validated_open_questions,
+        "open_questions": _normalize_open_questions(validated_open_questions),
         "follow_ups": validated_follow_ups,
     }
 

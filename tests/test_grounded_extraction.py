@@ -353,6 +353,55 @@ class GroundedExtractionTests(unittest.TestCase):
 
     @patch("ai.ask_llm")
     @patch("ai.chunk_transcript")
+    def test_social_attendance_is_not_a_work_commitment(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "I'll be there. I can make it. "
+            "I'll send the revised deck this week."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Unknown",
+                        "action": "Attend the meeting",
+                        "evidence": "I'll be there.",
+                    },
+                    {
+                        "owner": "Unknown",
+                        "action": "Attend the meeting",
+                        "evidence": "I can make it.",
+                    },
+                    {
+                        "owner": "Unknown",
+                        "action": "Send the revised deck",
+                        "evidence": "I'll send the revised deck this week.",
+                    },
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-COMMITMENT-TEST",
+            transcript=transcript,
+        )
+
+        self.assertEqual(len(result["commitments"]), 1)
+        self.assertEqual(
+            result["commitments"][0]["evidence"],
+            "I'll send the revised deck this week.",
+        )
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
     def test_risks_require_explicit_non_negated_verbatim_evidence(
         self,
         mock_chunk_transcript,
@@ -432,6 +481,333 @@ class GroundedExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["risks"], [])
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_conditional_offer_is_not_a_work_commitment(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "If you need help with the analysis, give it to me and I'll help. "
+            "I'll send the revised deck tomorrow."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Unknown",
+                        "action": "Help with the analysis",
+                        "evidence": "If you need help with the analysis, give it to me and I'll help.",
+                    },
+                    {
+                        "owner": "Unknown",
+                        "action": "Send the revised deck",
+                        "evidence": "I'll send the revised deck tomorrow.",
+                    },
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-CONDITIONAL-COMMITMENT",
+            transcript=transcript,
+        )
+
+        self.assertEqual(len(result["commitments"]), 1)
+        self.assertEqual(
+            result["commitments"][0]["evidence"],
+            "I'll send the revised deck tomorrow.",
+        )
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_adjacent_pronoun_commitment_is_merged(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = "I'll notify the team. Yeah, I'll take care of it."
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Unknown",
+                        "action": "Notify the team",
+                        "evidence": "I'll notify the team.",
+                    },
+                    {
+                        "owner": "Unknown",
+                        "action": "Take care of it",
+                        "evidence": "I'll take care of it.",
+                    },
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-MERGE-COMMITMENT",
+            transcript=transcript,
+        )
+
+        self.assertEqual(len(result["commitments"]), 1)
+        self.assertEqual(
+            result["commitments"][0]["evidence"],
+            "I'll notify the team. Yeah, I'll take care of it.",
+        )
+
+    def test_pronominal_removal_decision_uses_nearby_topic_context(self):
+        transcript = (
+            "We reviewed Vendor Atlas Replacement and the remaining transition work. "
+            "We got approval and we dropped them."
+        )
+        memory = {
+            "topics": [
+                {
+                    "topic_key": "vendor_atlas_replacement",
+                    "topic": "Vendor Atlas Replacement",
+                    "status": "closed",
+                    "summary": "Vendor Atlas Replacement is closed.",
+                }
+            ],
+            "commitments": [],
+            "decisions": [
+                {
+                    "decision": "Drop them.",
+                    "evidence": "we dropped them",
+                }
+            ],
+            "risks": [],
+            "open_questions": [],
+            "follow_ups": [],
+        }
+
+        result = ai._reconcile_meeting_memory(memory, transcript)
+
+        self.assertEqual(
+            result["decisions"],
+            [
+                {
+                    "decision": "Drop Vendor Atlas.",
+                    "evidence": "we dropped them",
+                }
+            ],
+        )
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_explicit_unresolved_question_is_recovered_when_model_omits_it(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "What is the path to incorporate the amendment into the agreement. "
+            "That item is still open and I am unclear how it carries over. "
+            "Are these separate orders. It will be a single order."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-QUESTION-RECOVERY",
+            transcript=transcript,
+        )
+
+        self.assertEqual(
+            result["open_questions"],
+            ["What is the path to incorporate the amendment into the agreement"],
+        )
+
+
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_conditional_offer_with_name_prefix_is_not_commitment(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "Jordan, if I can help with some of this, let me help, please. "
+            "I'll send the revised plan tomorrow."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Unknown",
+                        "action": "Help with some of this",
+                        "evidence": "Jordan, if I can help with some of this, let me help, please.",
+                    },
+                    {
+                        "owner": "Unknown",
+                        "action": "Send the revised plan",
+                        "evidence": "I'll send the revised plan tomorrow.",
+                    },
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-CONDITIONAL-OFFER-PREFIX",
+            transcript=transcript,
+        )
+
+        self.assertEqual(len(result["commitments"]), 1)
+        self.assertEqual(
+            result["commitments"][0]["evidence"],
+            "I'll send the revised plan tomorrow.",
+        )
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_indistinct_commitment_is_rejected(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = "I'll touch base on (indistinct)."
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Unknown",
+                        "action": "Touch base",
+                        "evidence": "I'll touch base on (indistinct)",
+                    }
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-INDISTINCT-COMMITMENT",
+            transcript=transcript,
+        )
+
+        self.assertEqual(result["commitments"], [])
+
+    def test_pronominal_removal_does_not_cross_speaker_boundary(self):
+        transcript = (
+            "[01:00] **Remote**\n\n"
+            "We reviewed Vendor Atlas Replacement and the remaining transition work.\n\n"
+            "[01:15] **Mic**\n\n"
+            "On a separate personal topic, we dropped them."
+        )
+        memory = {
+            "topics": [
+                {
+                    "topic_key": "vendor_atlas_replacement",
+                    "topic": "Vendor Atlas Replacement",
+                    "status": "ongoing",
+                    "summary": "Vendor Atlas Replacement is still under review.",
+                }
+            ],
+            "commitments": [],
+            "decisions": [
+                {
+                    "decision": "Drop them.",
+                    "evidence": "we dropped them",
+                }
+            ],
+            "risks": [],
+            "open_questions": [],
+            "follow_ups": [],
+        }
+
+        result = ai._reconcile_meeting_memory(memory, transcript)
+
+        self.assertEqual(result["decisions"], [])
+
+    def test_open_questions_reject_spill_and_deduplicate_variants(self):
+        questions = [
+            "what is the cap for that",
+            "what is the cap for that because the current language is unclear",
+            "have the language, I don't know what are the conditions for\n\n[03:50] **Mic**",
+            "is it fair to say that commercials were good",
+        ]
+
+        result = ai._normalize_open_questions(questions)
+
+        self.assertEqual(result, ["what is the cap for that"])
+
+    @patch("ai.ask_llm")
+    @patch("ai.chunk_transcript")
+    def test_question_fallback_does_not_borrow_uncertainty_before_question(
+        self,
+        mock_chunk_transcript,
+        mock_ask_llm,
+    ):
+        transcript = (
+            "We are not sure about an earlier issue. "
+            "Are these separate orders. It will be a single order."
+        )
+        mock_chunk_transcript.return_value = [transcript]
+        mock_ask_llm.return_value = json.dumps(
+            {
+                "commitments": [],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+
+        result = ai.extract_grounded_commitments_and_decisions(
+            meeting_label="GENERIC-QUESTION-NO-BORROW",
+            transcript=transcript,
+        )
+
+        self.assertEqual(result["open_questions"], [])
+
+    def test_open_questions_reject_incomplete_question_fragments(self):
+        questions = [
+            "what is offered I'll walk you through",
+            "which would fix some of that timing iteration",
+            "what guidance do you have for like making",
+            "what is the cap for that",
+            "how should we handle the renewal timing",
+        ]
+
+        result = ai._normalize_open_questions(questions)
+
+        self.assertEqual(
+            result,
+            [
+                "what is the cap for that",
+                "how should we handle the renewal timing",
+            ],
+        )
+
 
 
 if __name__ == "__main__":

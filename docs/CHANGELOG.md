@@ -38,6 +38,8 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 - Clarified the SwiftUI/Python boundary in project documentation: Swift owns the native app experience while Python remains the source of truth for transcription, AI, memory, sessions, persistence, and publishing.
 
 ### Fixed
+- Tightened recovered open-question filtering to reject incomplete ASR fragments and dangling question clauses while preserving complete unresolved business questions.
+- Tightened grounded meeting extraction so conditional or low-information offers are not promoted to commitments, adjacent pronoun-based commitment fragments are merged, ambiguous removal decisions require same-turn business context, and open-question recovery rejects transcript spill, near-duplicates, and unrelated uncertainty.
 - Fixed fresh installations ignoring the configured Meetings / Recordings directory during transcription preflight and runtime processing.
 - Grounded Risks and Concerns in transcript evidence so unsupported hypothetical risks are omitted and sections with no supported risks render `None identified.`
 - Stabilized grounded meeting-memory and summary composition so precision-sensitive sections are sourced from structured evidence rather than free-form narrative output.
