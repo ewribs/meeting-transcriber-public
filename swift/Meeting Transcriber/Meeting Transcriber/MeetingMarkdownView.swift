@@ -465,6 +465,61 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
     }
 }
 
+enum MarkdownPresentationNormalizer {
+    private static let sentenceCaseSections: Set<String> = [
+        "open questions",
+        "risks & concerns",
+        "risks and concerns",
+    ]
+
+    static func normalize(_ markdown: String) -> String {
+        var activeHeading: String?
+
+        return markdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .map { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+                if trimmed.hasPrefix("#") {
+                    let heading = trimmed
+                        .drop(while: { $0 == "#" || $0 == " " || $0 == "\t" })
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    activeHeading = heading
+                    return line
+                }
+
+                guard
+                    let activeHeading,
+                    sentenceCaseSections.contains(activeHeading),
+                    trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ")
+                else {
+                    return line
+                }
+
+                return sentenceCaseBullet(line)
+            }
+            .joined(separator: "\n")
+    }
+
+    private static func sentenceCaseBullet(_ line: String) -> String {
+        var characters = Array(line)
+        guard let index = characters.indices.first(where: { characters[$0].isLetter })
+        else {
+            return line
+        }
+
+        let uppercased = String(characters[index]).uppercased()
+        guard uppercased.count == 1, let character = uppercased.first else {
+            return line
+        }
+        characters[index] = character
+        return String(characters)
+    }
+}
+
 private enum MarkdownRenderer {
     static func render(
         _ markdown: String
@@ -472,9 +527,14 @@ private enum MarkdownRenderer {
         let output =
             NSMutableAttributedString()
 
+        let normalizedMarkdown =
+            MarkdownPresentationNormalizer.normalize(
+                markdown
+            )
+
         let blocks =
             MarkdownBlock.parse(
-                markdown
+                normalizedMarkdown
             )
 
         for (index, block) in

@@ -28,12 +28,12 @@ class AppSettingsTests(unittest.TestCase):
             settings["llm_model"],
             "qwen3:8b",
         )
-        self.assertEqual(settings["llm_backend"], "ollama")
+        self.assertEqual(settings["llm_backend"], "auto")
         self.assertEqual(
             settings["mlx_model"],
             "Qwen/Qwen3-30B-A3B-MLX-6bit",
         )
-        self.assertEqual(settings["mlx_max_tokens"], 3000)
+        self.assertEqual(settings["mlx_max_tokens"], 8000)
         self.assertEqual(
             settings["llm_context_size"],
             0,
@@ -50,6 +50,17 @@ class AppSettingsTests(unittest.TestCase):
             settings["archived_m4a_retention_days"],
             365,
         )
+
+    def test_legacy_mlx_3000_default_migrates_to_adaptive_8000(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+            path.write_text(
+                json.dumps({"mlx_max_tokens": 3000}),
+                encoding="utf-8",
+            )
+            loaded = load_app_settings(path)
+
+        self.assertEqual(loaded["mlx_max_tokens"], 8000)
 
     def test_save_and_load_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:

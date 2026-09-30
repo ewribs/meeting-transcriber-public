@@ -92,6 +92,12 @@ Configure:
 
 The model list is discovered from local Ollama. Use **Refresh Models** after installing or removing Ollama models.
 
+### AI backend
+
+Preferences offers **Auto (Recommended)**, **Ollama**, and **MLX**. Auto uses MLX with the configured 30B model on supported Apple Silicon Macs with at least 36 GB of unified memory when `mlx-lm` is available; otherwise it uses the configured Ollama model. The Preferences window shows the effective backend and model before you save. Manual Ollama and MLX selections override Auto.
+
+The Ollama model remains configured as the portable fallback. MLX model weights are loaded only when MLX is actually used; the first use may need to obtain the configured model if it is not already present in the local Hugging Face cache.
+
 ### Performance profile
 
 Available profiles:

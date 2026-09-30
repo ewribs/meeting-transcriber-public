@@ -8,11 +8,18 @@ struct PreferencesView: View {
     @State private var outputDir = ""
     @State private var archiveDir = ""
     @State private var recordingsDir = ""
+    @State private var llmBackend = "auto"
     @State private var llmModel = ""
     @State private var llmContextSize = 0
     @State private var m4aRetentionDays = 30
     @State private var archivedM4aRetentionDays =
         365
+
+    @State private var backendOptions:
+        [BackendOption] = []
+
+    @State private var resolvedLLMBackend:
+        ResolvedLLMBackend?
 
     @State private var performanceProfiles:
         [String] = []
@@ -51,6 +58,32 @@ struct PreferencesView: View {
 
     private let backend =
         BackendService()
+
+    private var selectedBackendDescription: String? {
+        backendOptions
+            .first {
+                $0.value == llmBackend
+            }?
+            .description
+    }
+
+    private var ollamaModelLabel: String {
+        llmBackend == "ollama"
+            ? "Ollama model"
+            : "Ollama fallback model"
+    }
+
+    private var effectiveModelStatus: String {
+        guard let resolved = resolvedLLMBackend else {
+            return modelStatus
+        }
+        if resolved.resolvedName == "mlx" {
+            return resolved.mlxAvailable
+                ? "MLX ready"
+                : "mlx-lm not installed"
+        }
+        return modelStatus
+    }
 
     private var selectedProfileDescription: String? {
         performanceProfileOptions
@@ -125,9 +158,48 @@ struct PreferencesView: View {
             }
 
             Section("Local AI") {
+                Picker(
+                    "AI backend",
+                    selection: $llmBackend
+                ) {
+                    ForEach(backendOptions) { option in
+                        Text(option.label)
+                            .tag(option.value)
+                    }
+                }
+                .frame(maxWidth: 360)
+
+                if let backendDescription = selectedBackendDescription {
+                    Text(backendDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let resolvedBackend = resolvedLLMBackend {
+                    LabeledContent("Effective backend") {
+                        Text(
+                            resolvedBackend.requestedName == "auto"
+                                ? "Auto → \(resolvedBackend.resolvedName.uppercased())"
+                                : resolvedBackend.resolvedName.uppercased()
+                        )
+                        .fontWeight(.semibold)
+                    }
+
+                    LabeledContent("Effective model") {
+                        Text(resolvedBackend.effectiveModel)
+                            .textSelection(.enabled)
+                    }
+
+                    Text(resolvedBackend.reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 HStack {
                     Picker(
-                        "Ollama model",
+                        ollamaModelLabel,
                         selection:
                             $llmModel
                     ) {
@@ -161,12 +233,12 @@ struct PreferencesView: View {
                 }
 
                 LabeledContent(
-                    "Model status"
+                    "Backend/model status"
                 ) {
-                    Text(modelStatus)
+                    Text(effectiveModelStatus)
                         .foregroundStyle(
-                            modelStatus
-                                == "Installed"
+                            effectiveModelStatus == "Installed"
+                                || effectiveModelStatus == "MLX ready"
                                 ? .green
                                 : .secondary
                         )
@@ -395,8 +467,13 @@ struct PreferencesView: View {
         .padding(12)
         .frame(
             width: 720,
-            height: 650
+            height: 720
         )
+        .onChange(of: llmBackend) { _, _ in
+            Task {
+                await refreshResolvedBackendPreview()
+            }
+        }
         .onChange(of: performanceProfile) { _, _ in
             Task {
                 await refreshResolvedRuntimePreview()
@@ -480,6 +557,14 @@ struct PreferencesView: View {
                 try await backend
                     .loadPreferences()
 
+            backendOptions =
+                response
+                    .backendOptions
+
+            resolvedLLMBackend =
+                response
+                    .resolvedLLMBackend
+
             performanceProfiles =
                 response
                     .performanceProfiles
@@ -517,6 +602,11 @@ struct PreferencesView: View {
                     response
                         .settings
                         .performanceProfile
+
+                llmBackend =
+                    response
+                        .settings
+                        .llmBackend
 
                 outputDir =
                     response
@@ -571,6 +661,22 @@ struct PreferencesView: View {
     }
 
     @MainActor
+    private func refreshResolvedBackendPreview() async {
+        guard !llmBackend.isEmpty else {
+            return
+        }
+
+        do {
+            resolvedLLMBackend = try await backend
+                .previewLLMBackend(
+                    llmBackend: llmBackend
+                )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
     private func refreshResolvedRuntimePreview() async {
         guard !performanceProfile.isEmpty else {
             return
@@ -618,6 +724,8 @@ struct PreferencesView: View {
                     .savePreferences(
                         performanceProfile:
                             performanceProfile,
+                        llmBackend:
+                            llmBackend,
                         outputDir:
                             outputDir,
                         archiveDir:

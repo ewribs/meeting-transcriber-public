@@ -142,6 +142,12 @@ the download begins.
 The transcription pipeline continues to use approximately five-minute Whisper
 chunks.
 
+## MLX acceleration
+
+On Apple Silicon, the Python dependency install also includes `mlx-lm`. Meeting Transcriber can use it through **Auto** or a manual **MLX** selection in Preferences. Auto selects MLX only on Macs with at least 36 GB of detected unified memory; lower-memory Macs continue to use Ollama.
+
+The configured MLX model is `Qwen/Qwen3-30B-A3B-MLX-6bit`. Model weights are loaded lazily. If the model is not already cached locally, the first MLX use may download it from Hugging Face and can require substantial disk space and network transfer. Ollama remains installed/configured as the fallback path.
+
 ## Ollama
 
 Ollama must respond locally at:

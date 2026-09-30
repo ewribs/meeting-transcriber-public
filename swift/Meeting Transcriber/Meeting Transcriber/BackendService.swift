@@ -213,6 +213,32 @@ nonisolated struct BackendService: Sendable {
         }
     }
 
+    func previewLLMBackend(
+        llmBackend: String
+    ) async throws
+        -> ResolvedLLMBackend
+    {
+        let data = try await runBridge(
+            arguments: [
+                "preview-llm-backend",
+                llmBackend,
+            ]
+        )
+
+        do {
+            return try JSONDecoder()
+                .decode(
+                    ResolvedLLMBackend.self,
+                    from: data
+                )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
     func previewPerformanceProfile(
         performanceProfile: String,
         llmContextSize: Int
@@ -243,6 +269,7 @@ nonisolated struct BackendService: Sendable {
 
     func savePreferences(
         performanceProfile: String,
+        llmBackend: String,
         outputDir: String,
         archiveDir: String,
         recordingsDir: String,
@@ -257,6 +284,7 @@ nonisolated struct BackendService: Sendable {
             arguments: [
                 "save-preferences",
                 performanceProfile,
+                llmBackend,
                 outputDir,
                 archiveDir,
                 recordingsDir,

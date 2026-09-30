@@ -14,17 +14,34 @@ struct Meeting_TranscriberTests {
     @Test func preferencesDecodeResolvedAutoProfile() throws {
         let json = #"""
         {
-          "schema_version": 15,
+          "schema_version": 16,
           "settings": {
             "performance_profile": "Auto",
+            "llm_backend": "auto",
             "output_dir": "/work",
             "archive_dir": "/archive",
             "recordings_dir": "/recordings",
             "llm_model": "qwen3:14b",
+            "mlx_model": "Qwen/Qwen3-30B-A3B-MLX-6bit",
             "llm_context_size": 0,
             "llm_context_mode": "profile_default",
             "m4a_retention_days": 30,
             "archived_m4a_retention_days": 365
+          },
+          "backend_options": [
+            {
+              "value": "auto",
+              "label": "Auto (Recommended)",
+              "description": "Selects the best local backend for this Mac."
+            }
+          ],
+          "resolved_llm_backend": {
+            "requested_name": "auto",
+            "resolved_name": "mlx",
+            "effective_model": "Qwen/Qwen3-30B-A3B-MLX-6bit",
+            "reason": "Auto selected MLX.",
+            "mlx_available": true,
+            "auto_eligible": true
           },
           "performance_profiles": [
             "Auto",
@@ -71,10 +88,35 @@ struct Meeting_TranscriberTests {
             from: Data(json.utf8)
         )
 
+        #expect(response.settings.llmBackend == "auto")
+        #expect(response.resolvedLLMBackend.resolvedName == "mlx")
+        #expect(response.resolvedLLMBackend.autoEligible)
         #expect(response.settings.llmContextMode == "profile_default")
         #expect(response.hardwareProfile.memoryGB == 36)
         #expect(response.resolvedPerformanceProfile.requestedName == "Auto")
         #expect(response.resolvedPerformanceProfile.resolvedName == "High Performance")
         #expect(response.resolvedPerformanceProfile.contextMode == "profile_default")
     }
+    @Test func sentenceCasesOpenQuestionAndRiskBulletsForDisplayOnly() {
+        let markdown = #"""
+        # Open Questions
+
+        - why is Platform Beta still unresolved?
+
+        # Risks & Concerns
+
+        - we're still at risk of a single-instance failure.
+
+        # Topics
+
+        - lowercase topic text should remain unchanged.
+        """#
+
+        let normalized = MarkdownPresentationNormalizer.normalize(markdown)
+
+        #expect(normalized.contains("- Why is Platform Beta still unresolved?"))
+        #expect(normalized.contains("- We're still at risk of a single-instance failure."))
+        #expect(normalized.contains("- lowercase topic text should remain unchanged."))
+    }
+
 }

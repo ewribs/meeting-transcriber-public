@@ -1438,7 +1438,9 @@ class BackendBridgeTests(unittest.TestCase):
                 "output_dir": "/work",
                 "archive_dir": "/archive",
                 "recordings_dir": "/recordings",
+                "llm_backend": "auto",
                 "llm_model": "qwen3:8b",
+                "mlx_model": "Qwen/Test-MLX",
                 "llm_context_size": 8192,
                 "llm_context_mode": "override",
                 "m4a_retention_days": 30,
@@ -1547,6 +1549,14 @@ class BackendBridgeTests(unittest.TestCase):
             "/recordings",
         )
         self.assertEqual(
+            payload["settings"]["llm_backend"],
+            "auto",
+        )
+        self.assertIn(
+            payload["resolved_llm_backend"]["resolved_name"],
+            {"ollama", "mlx"},
+        )
+        self.assertEqual(
             payload["model_status"],
             "Installed",
         )
@@ -1625,6 +1635,7 @@ class BackendBridgeTests(unittest.TestCase):
             payload = (
                 backend_bridge.save_preferences_payload(
                     "Balanced",
+                    "ollama",
                     "/work",
                     "/archive",
                     "/recordings",
@@ -1657,6 +1668,10 @@ class BackendBridgeTests(unittest.TestCase):
         self.assertEqual(
             saved["recordings_dir"],
             "/recordings",
+        )
+        self.assertEqual(
+            saved["llm_backend"],
+            "ollama",
         )
         self.assertEqual(
             saved["llm_model"],
@@ -1697,6 +1712,7 @@ class BackendBridgeTests(unittest.TestCase):
         ):
             backend_bridge.save_preferences_payload(
                 "Auto",
+                "auto",
                 "/work",
                 "/archive",
                 "/recordings",

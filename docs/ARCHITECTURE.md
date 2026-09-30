@@ -71,7 +71,7 @@ Auto chooses a tier primarily from detected unified memory. A context-size overr
 
 `query/execution.py` and related query modules decide whether a workload can run directly or should be chunked.
 
-Local inference is routed through `llm_backend.py`. Ollama remains the portable/default backend. An MLX backend is available as an opt-in path and is loaded lazily so installations that do not use MLX do not require MLX dependencies. Backend selection does not alter recording, transcription, grounding, or publishing semantics.
+Local inference is routed through `llm_backend.py`. The backend preference supports Auto, Ollama, and MLX. Auto selects the MLX 30B path on Apple Silicon Macs with at least 36 GB of detected unified memory when the MLX runtime is available; otherwise it falls back to Ollama. Manual Ollama and MLX overrides remain available. MLX model weights are loaded lazily, and backend selection does not alter recording, transcription, grounding, or publishing semantics.
 
 ## Query/session architecture
 

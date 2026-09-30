@@ -1,2 +1,4 @@
 # Runtime Python dependency used by summary/HTML generation.
 Markdown>=3.5,<4
+# MLX acceleration for supported Apple Silicon Macs.
+mlx-lm; platform_system == "Darwin" and platform_machine == "arm64"

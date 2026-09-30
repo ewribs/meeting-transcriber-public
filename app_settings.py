@@ -21,9 +21,9 @@ DEFAULT_SETTINGS = {
     "archive_dir": "",
     "recordings_dir": "",
     "llm_model": "qwen3:8b",
-    "llm_backend": "ollama",
+    "llm_backend": "auto",
     "mlx_model": "Qwen/Qwen3-30B-A3B-MLX-6bit",
-    "mlx_max_tokens": 3000,
+    "mlx_max_tokens": 8000,
     "llm_context_size": 0,
     "llm_context_mode": "profile_default",
     "m4a_retention_days": 30,
@@ -68,6 +68,13 @@ def load_app_settings(
 
         if settings.get("llm_context_mode") == "profile_default":
             settings["llm_context_size"] = 0
+
+        # 3000 was the original MLX generation default and proved too small
+        # for full narrative/polish responses. Migrate that legacy default to
+        # the adaptive 8K narrative ceiling; structured JSON is independently
+        # capped at 4K by MLXBackend.
+        if int(loaded.get("mlx_max_tokens", 0) or 0) == 3000:
+            settings["mlx_max_tokens"] = 8000
 
         # Migrate the earlier execution-profile preference without forcing
         # users to edit settings.json. Aggressive is the former name for

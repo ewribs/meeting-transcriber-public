@@ -810,5 +810,389 @@ class GroundedExtractionTests(unittest.TestCase):
 
 
 
+    def test_precision_v3_rejects_fake_is_out_decisions(self):
+        self.assertFalse(
+            ai._decision_evidence_is_explicit("Field is out doing field things")
+        )
+        self.assertFalse(
+            ai._decision_evidence_is_explicit("OS is out?")
+        )
+        self.assertTrue(
+            ai._decision_evidence_is_explicit("Vendor Atlas is out.")
+        )
+
+    def test_precision_v3_rejects_malformed_open_questions(self):
+        result = ai._normalize_open_questions(
+            [
+                "have it listed but we don't have savings attached to it at this point Correct",
+                "do it, we shouldn't be doing it",
+                "why would we convert them all?",
+            ]
+        )
+        self.assertEqual(result, ["why would we convert them all?"])
+
+    def test_precision_v3_rejects_locally_answered_question(self):
+        transcript = (
+            "[10:00] **Mic**\nWhen do you think this goes back to them?\n\n"
+            "[10:05] **Remote**\nHopefully early next week."
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved(
+                "When do you think this goes back to them?",
+                transcript,
+            )
+        )
+
+    def test_precision_v3_keeps_explicitly_unresolved_question(self):
+        transcript = (
+            "[10:00] **Mic**\nWhy would we convert them all?\n\n"
+            "[10:05] **Remote**\nI don't know if I can answer that. We still need to validate the target state."
+        )
+        self.assertTrue(
+            ai._question_is_locally_unresolved(
+                "Why would we convert them all?",
+                transcript,
+            )
+        )
+
+    def test_precision_v3_rejects_clipped_commitment(self):
+        self.assertFalse(
+            ai._commitment_is_actionable("I'll put it I just", "I'll put it I just")
+        )
+        self.assertTrue(
+            ai._commitment_is_actionable(
+                "I'll send you the updated file",
+                "I'll send you the updated file",
+            )
+        )
+
+    def test_precision_v3_deduplicates_exact_commitments(self):
+        commitments = [
+            {
+                "owner": "Person A",
+                "action": "I'll send the file",
+                "evidence": "I'll send the file",
+                "status": "open",
+            },
+            {
+                "owner": "Person A",
+                "action": "I'll send the file",
+                "evidence": "I'll send the file",
+                "status": "open",
+            },
+        ]
+        result = ai._deduplicate_commitments(commitments)
+        self.assertEqual(len(result), 1)
+
+
+    def test_precision_v4_fallback_requires_decision_evidence(self):
+        transcript = (
+            "Field is out doing field things. "
+            "OS is out? "
+            "VendorAtlas is out."
+        )
+
+        result = ai._explicit_decision_fallbacks(transcript)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["evidence"], "VendorAtlas is out.")
+
+    def test_precision_v4_fallback_rejects_descriptive_is_out_statement(self):
+        result = ai._explicit_decision_fallbacks(
+            "The field is out doing field things today."
+        )
+        self.assertEqual(result, [])
+
+    def test_precision_v4_fallback_rejects_interrogative_is_out_statement(self):
+        result = ai._explicit_decision_fallbacks("OS is out?")
+        self.assertEqual(result, [])
+
+
+    def test_precision_v5_rejects_cut_over_as_removal_decision(self):
+        transcript = (
+            "The migration will continue next month and one third of the sites "
+            "will need a cut over before activation."
+        )
+        self.assertEqual(ai._recover_explicit_removal_decisions(transcript), [])
+
+    def test_precision_v5_resolves_opaque_commitment_from_tight_context(self):
+        transcript = (
+            "We need to send the updated pricing spreadsheet to the finance team. "
+            "I'll do that right now."
+        )
+        resolved = ai._resolve_commitment_action(
+            "Send the updated pricing spreadsheet to the finance team",
+            "I'll do that right now.",
+            transcript,
+        )
+        self.assertEqual(
+            resolved,
+            "Send the updated pricing spreadsheet to the finance team",
+        )
+
+    def test_precision_v5_omits_unresolved_opaque_commitment(self):
+        transcript = "We talked through several options. I'll do that right now."
+        self.assertIsNone(
+            ai._resolve_commitment_action(
+                "I'll do that right now",
+                "I'll do that right now.",
+                transcript,
+            )
+        )
+
+    def test_precision_v8_rejects_tasking_commitment_without_topic(self):
+        transcript = (
+            "We need to decide the future state for Platform Beta. "
+            "I'll meet with Speaker B and Speaker C next week. "
+            "I'm going to put them to task on that too."
+        )
+        self.assertIsNone(
+            ai._resolve_commitment_action(
+                "Put Speaker B and Speaker C to task",
+                "I'm going to put them to task on that too.",
+                transcript,
+            )
+        )
+
+    def test_precision_v8_keeps_tasking_commitment_with_grounded_topic(self):
+        transcript = (
+            "We need to decide the Platform Beta future state. "
+            "I'll meet with Speaker B and Speaker C next week. "
+            "I'm going to put them to task on that too."
+        )
+        resolved = ai._resolve_commitment_action(
+            "Put Speaker B and Speaker C to task on Platform Beta future state",
+            "I'm going to put them to task on that too.",
+            transcript,
+        )
+        self.assertEqual(
+            resolved,
+            "Put Speaker B and Speaker C to task on Platform Beta future state",
+        )
+
+    def test_precision_v8_rejects_unresolved_second_person_commitment(self):
+        transcript = "I'll include you on the project emails going forward."
+        self.assertIsNone(
+            ai._resolve_commitment_action(
+                "I'll include you on the project emails going forward.",
+                "I'll include you on the project emails going forward.",
+                transcript,
+            )
+        )
+
+    def test_precision_v5_omits_low_value_social_photo_commitment(self):
+        transcript = (
+            "That team picture was funny. I'll post the picture to the group chat."
+        )
+        self.assertIsNone(
+            ai._resolve_commitment_action(
+                "I'll post the picture to the group chat",
+                "I'll post the picture to the group chat.",
+                transcript,
+            )
+        )
+
+    def test_precision_v5_rejects_repeated_and_chopped_open_question(self):
+        question = (
+            "do you do you think Vendor Alpha will have that broken out in the "
+            "way you described except for the"
+        )
+        self.assertFalse(ai._is_well_formed_question(question))
+
+    def test_precision_v5_rejects_conversational_problem_question(self):
+        transcript = (
+            "I mean, I guess, is it our problem? It's a purchase order and the "
+            "lines have to be right. Who owns fixing them?"
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved("is it our problem?", transcript)
+        )
+
+    def test_precision_v5_recovers_plainly_stated_explicit_risk(self):
+        result = ai._explicit_risk_fallbacks(
+            "We're still at risk of a single instance failure. "
+            "The team will review mitigation next week."
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn("single instance failure", result[0]["risk"])
+
+    def test_precision_v5_does_not_recover_negated_risk(self):
+        result = ai._explicit_risk_fallbacks(
+            "We are not at risk of a single instance failure."
+        )
+        self.assertEqual(result, [])
+
+    def test_precision_v6_rejects_question_with_trailing_conversation(self):
+        self.assertFalse(
+            ai._is_well_formed_question(
+                "What is the conflict with Platform Beta? Let me understand"
+            )
+        )
+
+
+    def test_precision_v9_rejects_diagnostic_question_when_local_discussion_explains_issue(self):
+        transcript = (
+            "[04:03] **Remote**\nWhat is the conflict with Platform Beta?\n\n"
+            "[04:10] **Mic**\nWhat is the timing dependency?\n\n"
+            "[04:20] **Remote**\nIf Platform Beta slips, several dependent services "
+            "would remain on legacy hosting and we would have to migrate them separately."
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved(
+                "What is the conflict with Platform Beta?",
+                transcript,
+            )
+        )
+
+    def test_precision_v9_keeps_diagnostic_question_when_issue_is_explicitly_unknown(self):
+        transcript = (
+            "[04:03] **Remote**\nWhat is the conflict with Platform Beta?\n\n"
+            "[04:10] **Mic**\nI don't know yet. We still need to investigate the dependency."
+        )
+        self.assertTrue(
+            ai._question_is_locally_unresolved(
+                "What is the conflict with Platform Beta?",
+                transcript,
+            )
+        )
+
+    def test_precision_v6_rejects_immediately_answered_duration_question(self):
+        transcript = (
+            "[04:45] **Mic**\n\nIs it two years?\n\n"
+            "[04:50] **Remote**\n\nThey describe it as a three-year transition, "
+            "probably three to five years."
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved("Is it two years?", transcript)
+        )
+
+    def test_precision_v6_rejects_clipped_risk_ending_in_comma(self):
+        risk = (
+            "the risk that we see is that as we send the communication "
+            "to the business where we say,"
+        )
+        self.assertFalse(ai._risk_is_supported(risk, risk))
+
+    def test_precision_v6_rejects_long_conversational_concern_spill(self):
+        risk = (
+            "I'm a little concerned about this topic and like the expectations "
+            "of what we're gonna like what we're gonna get out of the discussion "
+            "yes I mean Speaker A we just had this conversation earlier this week"
+        )
+        self.assertFalse(ai._risk_is_supported(risk, risk))
+
+    def test_precision_v6_preserves_complete_explicit_risk(self):
+        risk = (
+            "the risk here is that late changes may create resistance from the team"
+        )
+        self.assertTrue(ai._risk_is_supported(risk, risk))
+
+    def test_precision_v6_resolves_opaque_follow_up_from_tight_context(self):
+        transcript = (
+            "We need to decide whether Platform Beta stays in the target state. "
+            "We will take that as a follow-up to make a decision."
+        )
+        resolved = ai._resolve_follow_up_action(
+            "Decide whether Platform Beta stays in the target state",
+            "We will take that as a follow-up to make a decision.",
+            transcript,
+        )
+        self.assertEqual(
+            resolved,
+            "Decide whether Platform Beta stays in the target state",
+        )
+
+    def test_precision_v6_omits_unresolved_opaque_follow_up(self):
+        transcript = (
+            "We covered several unrelated topics. "
+            "We will take that as a follow-up to make a decision."
+        )
+        self.assertIsNone(
+            ai._resolve_follow_up_action(
+                "Take that as a follow-up to make a decision",
+                "We will take that as a follow-up to make a decision.",
+                transcript,
+            )
+        )
+
+    def test_precision_v6_follow_up_uses_model_action_not_opaque_evidence(self):
+        transcript = (
+            "Please send the Platform Beta review slides to the working group. "
+            "We can absolutely, as a follow-up, send those out tomorrow."
+        )
+        resolved = ai._resolve_follow_up_action(
+            "Send the Platform Beta review slides to the working group",
+            "We can absolutely, as a follow-up, send those out tomorrow.",
+            transcript,
+        )
+        self.assertEqual(
+            resolved,
+            "Send the Platform Beta review slides to the working group",
+        )
+
+    def test_precision_v7_recovers_complete_risk_across_adjacent_same_channel_blocks(self):
+        transcript = (
+            "[10:02] **Remote**\n\n"
+            "We need capacity for Project Delta before the renewal next June,\n\n"
+            "[10:44] **Remote**\n\n"
+            "and teams are saying this was not in their plan. "
+            "I think the risk here is that late-arriving work may create resistance around that. "
+            "Where are you hearing that?"
+        )
+        result = ai._explicit_risk_fallbacks(transcript)
+        self.assertEqual(len(result), 1)
+        self.assertIn("late-arriving work may create resistance", result[0]["risk"])
+
+    def test_precision_v7_does_not_merge_risk_context_across_channel_change(self):
+        transcript = (
+            "[10:02] **Remote**\n\n"
+            "I think the risk here is that this may continue,\n\n"
+            "[10:44] **Mic**\n\n"
+            "and the team could resist the change."
+        )
+        self.assertEqual(ai._explicit_risk_fallbacks(transcript), [])
+
+    def test_precision_v7_rejects_vague_follow_up_decision_reference(self):
+        transcript = (
+            "We discussed several options during the session. "
+            "We will take that as a follow-up to make a decision from today's session."
+        )
+        self.assertIsNone(
+            ai._resolve_follow_up_action(
+                "Take a follow-up on the decision from today's session",
+                "We will take that as a follow-up to make a decision from today's session.",
+                transcript,
+            )
+        )
+
+    def test_precision_v7_rejects_conversational_follow_up_action_text(self):
+        transcript = (
+            "We have review slides for Platform Beta. "
+            "We can absolutely, as a follow-up, send out what we're looking at because slides are associated."
+        )
+        self.assertIsNone(
+            ai._resolve_follow_up_action(
+                "We can absolutely, as a follow-up, send out what we're looking at because slides are associated",
+                "We can absolutely, as a follow-up, send out what we're looking at because slides are associated.",
+                transcript,
+            )
+        )
+
+    def test_precision_v7_keeps_grounded_self_contained_follow_up_action(self):
+        transcript = (
+            "We have Platform Beta review slides for the working group. "
+            "We can absolutely, as a follow-up, send those slides to the working group tomorrow."
+        )
+        resolved = ai._resolve_follow_up_action(
+            "Send the Platform Beta review slides to the working group",
+            "We can absolutely, as a follow-up, send those slides to the working group tomorrow.",
+            transcript,
+        )
+        self.assertEqual(
+            resolved,
+            "Send the Platform Beta review slides to the working group",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

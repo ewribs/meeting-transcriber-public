@@ -1,4 +1,7 @@
 # Changelog
+- Tightened explicit decision fallback recovery so recovered candidates must pass the same proposition-level evidence validation as model-extracted decisions, preventing descriptive or interrogative "is out" fragments from becoming authoritative decisions.
+
+- Tightened grounded precision validation for decisions, commitments, and open questions: rejects false `is out` decision fragments, clipped commitments, malformed question-like statements, duplicate commitments, and locally answered/rhetorical questions while preserving explicitly unresolved questions.
 
 This changelog tracks meaningful product, architecture, workflow, and reliability changes in Meeting Transcriber. It is intentionally curated rather than being a commit-by-commit diary.
 
@@ -9,6 +12,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 - Changed setup bootstrap to preserve existing setup paths/models by default, choose a hardware-aware model only for fresh installs, and avoid reinstalling functional local dependencies.
 
 ### Added
+- Added Preferences controls for Auto / Ollama / MLX inference selection, including the effective backend/model and hardware-aware Auto resolution.
 - Added a pluggable local inference backend boundary with Ollama remaining the default and an opt-in MLX backend for higher-memory Apple Silicon systems.
 - Added a transparent macOS setup/validation workflow with dry-run/check modes, configurable storage/model paths, documented network actions, safe Application Support configuration backups, and optional Xcode build validation.
 - Added install metadata so the Swift app can locate the Python backend from a configurable repository directory instead of requiring one fixed checkout path.
@@ -28,6 +32,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
   - `docs/DEVELOPMENT.md`
 
 ### Changed
+- Changed the default inference preference to Auto: capable Apple Silicon Macs with at least 36 GB unified memory use MLX when available, while lower-memory or unsupported systems retain Ollama.
 - Removed tracked Xcode per-user state and anonymized remaining legacy/Swift/source examples that identified a developer, coworker, or supplier.
 - Externalized organization-specific topic-normalization rules into Git-ignored local business context configuration.
 - Externalized local user identity/self-reference aliases into a Git-ignored runtime configuration so real names no longer need to live in committed application source.

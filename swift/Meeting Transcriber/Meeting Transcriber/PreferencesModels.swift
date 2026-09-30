@@ -8,7 +8,9 @@ nonisolated struct AppPreferenceValues:
     let outputDir: String
     let archiveDir: String
     let recordingsDir: String
+    let llmBackend: String
     let llmModel: String
+    let mlxModel: String
     let llmContextSize: Int
     let llmContextMode: String
     let m4aRetentionDays: Int
@@ -26,8 +28,12 @@ nonisolated struct AppPreferenceValues:
             "archive_dir"
         case recordingsDir =
             "recordings_dir"
+        case llmBackend =
+            "llm_backend"
         case llmModel =
             "llm_model"
+        case mlxModel =
+            "mlx_model"
         case llmContextSize =
             "llm_context_size"
         case llmContextMode =
@@ -36,6 +42,48 @@ nonisolated struct AppPreferenceValues:
             "m4a_retention_days"
         case archivedM4aRetentionDays =
             "archived_m4a_retention_days"
+    }
+}
+
+
+nonisolated struct BackendOption:
+    Identifiable,
+    Decodable,
+    Sendable
+{
+    let value: String
+    let label: String
+    let description: String
+
+    var id: String { value }
+}
+
+nonisolated struct ResolvedLLMBackend:
+    Decodable,
+    Sendable
+{
+    let requestedName: String
+    let resolvedName: String
+    let effectiveModel: String
+    let reason: String
+    let mlxAvailable: Bool
+    let autoEligible: Bool
+
+    enum CodingKeys:
+        String,
+        CodingKey
+    {
+        case requestedName =
+            "requested_name"
+        case resolvedName =
+            "resolved_name"
+        case effectiveModel =
+            "effective_model"
+        case reason
+        case mlxAvailable =
+            "mlx_available"
+        case autoEligible =
+            "auto_eligible"
     }
 }
 
@@ -132,6 +180,8 @@ nonisolated struct PreferencesResponse:
 {
     let schemaVersion: Int
     let settings: AppPreferenceValues
+    let backendOptions: [BackendOption]
+    let resolvedLLMBackend: ResolvedLLMBackend
     let performanceProfiles: [String]
     let performanceProfileOptions:
         [PerformanceProfileOption]
@@ -153,6 +203,10 @@ nonisolated struct PreferencesResponse:
         case schemaVersion =
             "schema_version"
         case settings
+        case backendOptions =
+            "backend_options"
+        case resolvedLLMBackend =
+            "resolved_llm_backend"
         case performanceProfiles =
             "performance_profiles"
         case performanceProfileOptions =

@@ -10,6 +10,8 @@ from pathlib import Path
 from app_settings import load_app_settings
 from identity_config import load_identity_config
 from business_context_config import load_business_context_config
+from hardware_profile import detect_hardware_profile
+from llm_backend import resolve_backend_preference
 from performance_profile import resolve_performance_profile
 
 # ---------------------------------------------------------
@@ -88,9 +90,9 @@ WHISPER_CHUNK_MINUTES = 5
 # ---------------------------------------------------------
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-LLM_BACKEND = str(
+LLM_BACKEND_PREFERENCE = str(
     _APP_SETTINGS.get("llm_backend")
-    or "ollama"
+    or "auto"
 ).strip().lower()
 MLX_MODEL = str(
     _APP_SETTINGS.get("mlx_model")
@@ -98,7 +100,7 @@ MLX_MODEL = str(
 ).strip()
 MLX_MAX_TOKENS = int(
     _APP_SETTINGS.get("mlx_max_tokens")
-    or 3000
+    or 8000
 )
 LLM_MODEL = str(
     _APP_SETTINGS.get("llm_model")
@@ -116,10 +118,20 @@ LLM_CONTEXT_SIZE_OVERRIDE = int(
     or 0
 )
 
+_HARDWARE_PROFILE = detect_hardware_profile()
+
 _RESOLVED_PERFORMANCE_PROFILE = resolve_performance_profile(
     PERFORMANCE_PROFILE,
     context_size_override=LLM_CONTEXT_SIZE_OVERRIDE,
+    hardware=_HARDWARE_PROFILE,
 )
+
+_RESOLVED_LLM_BACKEND = resolve_backend_preference(
+    LLM_BACKEND_PREFERENCE,
+    hardware=_HARDWARE_PROFILE,
+)
+LLM_BACKEND = _RESOLVED_LLM_BACKEND.resolved_name
+LLM_BACKEND_REASON = _RESOLVED_LLM_BACKEND.reason
 
 LLM_CONTEXT_SIZE = (
     _RESOLVED_PERFORMANCE_PROFILE.context_size_tokens

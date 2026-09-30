@@ -1640,6 +1640,10 @@ def preferences_payload() -> dict[str, Any]:
     from app_settings import load_app_settings
     from config import ARCHIVE_DIR, OUTPUT_DIR
     from hardware_profile import detect_hardware_profile
+    from llm_backend import (
+        backend_preference_options,
+        resolve_backend_preference,
+    )
     from ollama_models import (
         discover_installed_ollama_models,
     )
@@ -1662,6 +1666,16 @@ def preferences_payload() -> dict[str, Any]:
         or ""
     ).strip()
 
+    configured_mlx_model = str(
+        settings.get("mlx_model")
+        or "Qwen/Qwen3-30B-A3B-MLX-6bit"
+    ).strip()
+
+    requested_backend = str(
+        settings.get("llm_backend")
+        or "auto"
+    ).strip().lower()
+
     requested_profile = str(
         settings.get("performance_profile")
         or "Auto"
@@ -1683,6 +1697,10 @@ def preferences_payload() -> dict[str, Any]:
         context_size_override=context_override,
         hardware=hardware,
     )
+    resolved_backend = resolve_backend_preference(
+        requested_backend,
+        hardware=hardware,
+    )
 
     installed_models, discovery_error = (
         discover_installed_ollama_models()
@@ -1694,9 +1712,10 @@ def preferences_payload() -> dict[str, Any]:
     )
 
     return {
-        "schema_version": 15,
+        "schema_version": 16,
         "settings": {
             "performance_profile": requested_profile,
+            "llm_backend": requested_backend,
             "output_dir": str(
                 settings.get("output_dir")
                 or OUTPUT_DIR
@@ -1710,6 +1729,7 @@ def preferences_payload() -> dict[str, Any]:
                 or ""
             ),
             "llm_model": configured_model,
+            "mlx_model": configured_mlx_model,
             "llm_context_size": context_override,
             "llm_context_mode": context_mode,
             "m4a_retention_days": int(
@@ -1730,6 +1750,19 @@ def preferences_payload() -> dict[str, Any]:
                 is not None
                 else 365
             ),
+        },
+        "backend_options": backend_preference_options(),
+        "resolved_llm_backend": {
+            "requested_name": resolved_backend.requested_name,
+            "resolved_name": resolved_backend.resolved_name,
+            "effective_model": (
+                configured_mlx_model
+                if resolved_backend.resolved_name == "mlx"
+                else configured_model
+            ),
+            "reason": resolved_backend.reason,
+            "mlx_available": resolved_backend.mlx_available,
+            "auto_eligible": resolved_backend.auto_eligible,
         },
         "performance_profiles": list(
             PERFORMANCE_PROFILE_NAMES
@@ -1780,6 +1813,46 @@ def preferences_payload() -> dict[str, Any]:
     }
 
 
+def llm_backend_preview_payload(llm_backend: str) -> dict[str, Any]:
+    from app_settings import load_app_settings
+    from hardware_profile import detect_hardware_profile
+    from llm_backend import (
+        BACKEND_PREFERENCE_VALUES,
+        normalize_backend_preference,
+        resolve_backend_preference,
+    )
+
+    normalized = normalize_backend_preference(llm_backend)
+    if str(llm_backend or "").strip().lower() not in {
+        "auto", "ollama", "mlx", "mlx-lm"
+    }:
+        raise ValueError(f"Unknown AI backend: {llm_backend}")
+    if normalized not in BACKEND_PREFERENCE_VALUES:
+        raise ValueError(f"Unknown AI backend: {llm_backend}")
+
+    settings = load_app_settings()
+    resolved = resolve_backend_preference(
+        normalized,
+        hardware=detect_hardware_profile(),
+    )
+    ollama_model = str(settings.get("llm_model") or "qwen3:8b").strip()
+    mlx_model = str(
+        settings.get("mlx_model")
+        or "Qwen/Qwen3-30B-A3B-MLX-6bit"
+    ).strip()
+
+    return {
+        "requested_name": resolved.requested_name,
+        "resolved_name": resolved.resolved_name,
+        "effective_model": (
+            mlx_model if resolved.resolved_name == "mlx" else ollama_model
+        ),
+        "reason": resolved.reason,
+        "mlx_available": resolved.mlx_available,
+        "auto_eligible": resolved.auto_eligible,
+    }
+
+
 def performance_profile_preview_payload(
     performance_profile: str,
     llm_context_size: int,
@@ -1823,6 +1896,7 @@ def performance_profile_preview_payload(
 
 def save_preferences_payload(
     performance_profile: str,
+    llm_backend: str,
     output_dir: str,
     archive_dir: str,
     recordings_dir: str,
@@ -1840,6 +1914,10 @@ def save_preferences_payload(
     from preferences_ui import (
         validate_preferences,
     )
+    from llm_backend import (
+        BACKEND_PREFERENCE_VALUES,
+        normalize_backend_preference,
+    )
     from performance_profile import (
         PERFORMANCE_PROFILE_NAMES,
     )
@@ -1855,6 +1933,13 @@ def save_preferences_payload(
             f"{validation.title}: "
             f"{validation.message}"
         )
+
+    raw_backend = str(llm_backend or "").strip().lower()
+    if raw_backend not in {"auto", "ollama", "mlx", "mlx-lm"}:
+        raise ValueError(f"Unknown AI backend: {llm_backend}")
+    normalized_backend = normalize_backend_preference(raw_backend)
+    if normalized_backend not in BACKEND_PREFERENCE_VALUES:
+        raise ValueError(f"Unknown AI backend: {llm_backend}")
 
     if performance_profile not in PERFORMANCE_PROFILE_NAMES:
         raise ValueError(
@@ -1886,6 +1971,8 @@ def save_preferences_payload(
         {
             "performance_profile":
                 performance_profile,
+            "llm_backend":
+                normalized_backend,
             "output_dir":
                 output_dir.strip(),
             "archive_dir":
@@ -2193,6 +2280,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return current app preferences and model status",
     )
 
+    preview_backend_parser = subparsers.add_parser(
+        "preview-llm-backend",
+        help="Resolve an AI backend without saving preferences",
+    )
+    preview_backend_parser.add_argument("llm_backend")
+
     preview_performance_parser = subparsers.add_parser(
         "preview-performance-profile",
         help="Resolve a performance profile without saving preferences",
@@ -2211,6 +2304,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     save_preferences_parser.add_argument(
         "performance_profile"
+    )
+    save_preferences_parser.add_argument(
+        "llm_backend"
     )
     save_preferences_parser.add_argument(
         "output_dir"
@@ -2397,6 +2493,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "preferences":
             payload = preferences_payload()
 
+        elif args.command == "preview-llm-backend":
+            payload = llm_backend_preview_payload(
+                args.llm_backend
+            )
+
         elif args.command == "preview-performance-profile":
             payload = performance_profile_preview_payload(
                 args.performance_profile,
@@ -2406,6 +2507,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "save-preferences":
             payload = save_preferences_payload(
                 args.performance_profile,
+                args.llm_backend,
                 args.output_dir,
                 args.archive_dir,
                 args.recordings_dir,

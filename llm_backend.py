@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import time
@@ -7,6 +8,142 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
+
+
+BACKEND_PREFERENCE_VALUES = ("auto", "ollama", "mlx")
+BACKEND_PREFERENCE_OPTIONS = (
+    {
+        "value": "auto",
+        "label": "Auto (Recommended)",
+        "description": (
+            "Uses MLX 30B on Apple Silicon Macs with sufficient unified-memory "
+            "headroom when mlx-lm is available; otherwise uses Ollama."
+        ),
+    },
+    {
+        "value": "ollama",
+        "label": "Ollama",
+        "description": "Always use the configured Ollama model.",
+    },
+    {
+        "value": "mlx",
+        "label": "MLX",
+        "description": "Always use the configured MLX model on this Mac.",
+    },
+)
+
+
+@dataclass(frozen=True)
+class BackendResolution:
+    requested_name: str
+    resolved_name: str
+    reason: str
+    mlx_available: bool
+    auto_eligible: bool
+
+
+def normalize_backend_preference(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"mlx", "mlx-lm"}:
+        return "mlx"
+    if normalized == "ollama":
+        return "ollama"
+    return "auto"
+
+
+def mlx_runtime_available() -> bool:
+    try:
+        return importlib.util.find_spec("mlx_lm") is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+def backend_preference_options() -> list[dict[str, str]]:
+    return [dict(item) for item in BACKEND_PREFERENCE_OPTIONS]
+
+
+def resolve_backend_preference(
+    requested_name: str | None,
+    *,
+    hardware: Any = None,
+    mlx_available: bool | None = None,
+) -> BackendResolution:
+    requested = normalize_backend_preference(requested_name)
+    available = (
+        mlx_runtime_available()
+        if mlx_available is None
+        else bool(mlx_available)
+    )
+
+    if hardware is None:
+        from hardware_profile import detect_hardware_profile
+
+        hardware = detect_hardware_profile()
+
+    system = str(getattr(hardware, "system", "") or "")
+    architecture = str(getattr(hardware, "architecture", "") or "").lower()
+    memory_gb = int(getattr(hardware, "memory_gb", 0) or 0)
+    apple_silicon = system == "Darwin" and architecture in {"arm64", "aarch64"}
+
+    # The 30B 6-bit model peaked around 24 GB in project benchmarks. Requiring
+    # at least 36 GB leaves practical headroom for macOS, the app, and context.
+    auto_eligible = apple_silicon and memory_gb >= 36
+
+    if requested == "ollama":
+        return BackendResolution(
+            requested_name=requested,
+            resolved_name="ollama",
+            reason="Manual Ollama backend selected.",
+            mlx_available=available,
+            auto_eligible=auto_eligible,
+        )
+
+    if requested == "mlx":
+        reason = "Manual MLX backend selected."
+        if not available:
+            reason += " mlx-lm is not installed in the active Python environment."
+        return BackendResolution(
+            requested_name=requested,
+            resolved_name="mlx",
+            reason=reason,
+            mlx_available=available,
+            auto_eligible=auto_eligible,
+        )
+
+    if auto_eligible and available:
+        return BackendResolution(
+            requested_name="auto",
+            resolved_name="mlx",
+            reason=(
+                f"Auto selected MLX from {memory_gb} GB unified memory on "
+                "Apple Silicon; the MLX runtime is available."
+            ),
+            mlx_available=True,
+            auto_eligible=True,
+        )
+
+    if not apple_silicon:
+        reason = "Auto selected Ollama because MLX acceleration requires Apple Silicon."
+    elif memory_gb <= 0:
+        reason = "Auto selected Ollama because unified memory could not be determined."
+    elif memory_gb < 36:
+        reason = (
+            f"Auto selected Ollama from {memory_gb} GB unified memory to preserve "
+            "headroom for macOS, context, and the app."
+        )
+    else:
+        reason = (
+            "Auto selected Ollama because mlx-lm is not installed in the active "
+            "Python environment."
+        )
+
+    return BackendResolution(
+        requested_name="auto",
+        resolved_name="ollama",
+        reason=reason,
+        mlx_available=available,
+        auto_eligible=auto_eligible,
+    )
 
 
 class LLMBackend(Protocol):
@@ -99,7 +236,7 @@ class MLXBackend:
         self,
         *,
         model: str,
-        max_tokens: int = 3000,
+        max_tokens: int = 8000,
     ) -> None:
         self.model_name = model
         self.max_tokens = int(max_tokens)
@@ -211,13 +348,23 @@ class MLXBackend:
 
         formatted_prompt = self._chat_prompt(user_prompt)
 
+        # Structured extraction is intentionally bounded more tightly than
+        # narrative/session generation.  JSON facts should remain concise,
+        # while summaries and Sessions analysis need enough headroom to avoid
+        # the production truncation failures seen with the old 3K ceiling.
+        effective_max_tokens = (
+            min(self.max_tokens, 4000)
+            if response_format is not None
+            else self.max_tokens
+        )
+
         started = time.perf_counter()
         try:
             raw = generate(
                 model=self._model,
                 tokenizer=self._tokenizer,
                 prompt=formatted_prompt,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 verbose=False,
             )
         except TypeError:
@@ -225,7 +372,7 @@ class MLXBackend:
                 self._model,
                 self._tokenizer,
                 prompt=formatted_prompt,
-                max_tokens=self.max_tokens,
+                max_tokens=effective_max_tokens,
                 verbose=False,
             )
         finally:
@@ -233,7 +380,7 @@ class MLXBackend:
 
         response_text = self._strip_thinking(str(raw))
         output_tokens = self._token_count(response_text)
-        if output_tokens >= max(1, int(self.max_tokens * 0.98)):
+        if output_tokens >= max(1, int(effective_max_tokens * 0.98)):
             raise RuntimeError(
                 "MLX response appears truncated at the generation token ceiling."
             )

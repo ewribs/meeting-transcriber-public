@@ -5,7 +5,9 @@ import urllib.request
 import json
 
 from config import (
+    LLM_BACKEND,
     LLM_MODEL,
+    MLX_MODEL,
     MEETINGS_DIR,
     OLLAMA_URL,
     OUTPUT_DIR,
@@ -59,35 +61,47 @@ def run_preflight() -> None:
 
     print("Whisper model ........... OK")
 
-    ollama_tags_url = "http://localhost:11434/api/tags"
+    if LLM_BACKEND == "mlx":
+        try:
+            import mlx_lm  # noqa: F401
+        except ImportError as error:
+            raise RuntimeError(
+                "MLX is the active AI backend, but mlx-lm is not installed "
+                "in the active Python environment."
+            ) from error
 
-    try:
-        with urllib.request.urlopen(
-            ollama_tags_url,
-            timeout=5,
-        ) as response:
-            ollama_data = json.loads(
-                response.read().decode("utf-8")
+        print("AI backend ............... OK (MLX)")
+        print(f"LLM model ............... OK ({MLX_MODEL})")
+    else:
+        ollama_tags_url = "http://localhost:11434/api/tags"
+
+        try:
+            with urllib.request.urlopen(
+                ollama_tags_url,
+                timeout=5,
+            ) as response:
+                ollama_data = json.loads(
+                    response.read().decode("utf-8")
+                )
+
+        except urllib.error.URLError as error:
+            raise RuntimeError(
+                f"Ollama is not responding at {ollama_tags_url}: {error}"
+            ) from error
+
+        print("AI backend ............... OK (Ollama)")
+
+        installed_models = {
+            model.get("name", "")
+            for model in ollama_data.get("models", [])
+        }
+
+        if LLM_MODEL not in installed_models:
+            raise RuntimeError(
+                f"LLM model is not installed: {LLM_MODEL}\n"
+                f"Installed models: {', '.join(sorted(installed_models))}"
             )
 
-    except urllib.error.URLError as error:
-        raise RuntimeError(
-            f"Ollama is not responding at {ollama_tags_url}: {error}"
-        ) from error
-
-    print("Ollama .................. OK")
-
-    installed_models = {
-        model.get("name", "")
-        for model in ollama_data.get("models", [])
-    }
-
-    if LLM_MODEL not in installed_models:
-        raise RuntimeError(
-            f"LLM model is not installed: {LLM_MODEL}\n"
-            f"Installed models: {', '.join(sorted(installed_models))}"
-        )
-
-    print(f"LLM model ............... OK ({LLM_MODEL})")
+        print(f"LLM model ............... OK ({LLM_MODEL})")
     print()
     print()
