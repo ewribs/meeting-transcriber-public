@@ -8,9 +8,6 @@ struct MeetingsView: View {
     @EnvironmentObject
     private var navigation: AppNavigationController
 
-    @EnvironmentObject
-    private var transcriptionController: TranscriptionController
-
     private enum MeetingWorkspaceTab:
         String,
         CaseIterable,
@@ -53,6 +50,8 @@ struct MeetingsView: View {
     @State private var showingDeleteConfirmation = false
     @State private var pendingDeletePlan: MeetingDeletePlanResponse?
     @State private var deleteErrorMessage: String?
+    @State private var transcriptionQueueCleanupRequest:
+        MeetingTranscriptionQueueCleanupRequest?
 
     @State private var isUnpublishing = false
     @State private var showingUnpublishConfirmation = false
@@ -244,6 +243,12 @@ struct MeetingsView: View {
                 alignment: .topLeading
             )
         }
+        .background {
+            MeetingTranscriptionQueueCleanupBridge(
+                request: transcriptionQueueCleanupRequest
+            )
+            .frame(width: 0, height: 0)
+        }
         .navigationTitle("Meetings")
         .task {
             await reloadMeetings()
@@ -304,11 +309,26 @@ struct MeetingsView: View {
             isPresented: $showingDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete Meeting", role: .destructive) {
+            Button("Delete Meeting, Keep Recording") {
                 Task {
-                    await deleteSelectedMeeting()
+                    await deleteSelectedMeeting(
+                        operation: .keepRecording
+                    )
                 }
             }
+            .keyboardShortcut(.defaultAction)
+
+            Button("Delete Meeting and Recording", role: .destructive) {
+                Task {
+                    await deleteSelectedMeeting(
+                        operation: .deleteRecording
+                    )
+                }
+            }
+            .disabled(
+                !(pendingDeletePlan?.sourceFound == true
+                    && pendingDeletePlan?.sourceIsManaged == true)
+            )
 
             Button("Cancel", role: .cancel) {
                 pendingDeletePlan = nil
@@ -1618,11 +1638,17 @@ struct MeetingsView: View {
         ]
 
         if plan.sourceFound && plan.sourceIsManaged {
-            parts.append("The app-managed source recording will also be moved to Trash.")
+            parts.append(
+                "Choose ‘Delete Meeting, Keep Recording’ to preserve the app-managed source recording, or ‘Delete Meeting and Recording’ to move that recording to Trash too."
+            )
         } else if plan.sourceFound {
-            parts.append("The source audio appears to be external/imported and will be kept.")
+            parts.append(
+                "The source audio appears to be external/imported and will always be kept."
+            )
         } else {
-            parts.append("No matching source recording was found, so no audio file will be removed.")
+            parts.append(
+                "No matching source recording was found, so there is no recording to remove."
+            )
         }
 
         if plan.sessionReferenceCount > 0 {
@@ -1682,7 +1708,9 @@ struct MeetingsView: View {
     }
 
     @MainActor
-    private func deleteSelectedMeeting() async {
+    private func deleteSelectedMeeting(
+        operation: MeetingDeleteOperation
+    ) async {
         guard let selectedMeeting,
               let plan = pendingDeletePlan,
               plan.run == selectedMeeting.run,
@@ -1722,7 +1750,8 @@ struct MeetingsView: View {
                 resultingItemURL: &trashedRunURL
             )
 
-            if plan.sourceIsManaged,
+            if operation.deletesManagedRecording,
+               plan.sourceIsManaged,
                let sourcePath = usableFilesystemPath(plan.sourcePath),
                plan.sourceFound {
                 let sourceURL = URL(fileURLWithPath: sourcePath)
@@ -1739,10 +1768,11 @@ struct MeetingsView: View {
                 run: plan.run
             )
 
-            transcriptionController.removeMeetingReference(
-                run: plan.run,
-                sourcePath: plan.sourcePath
-            )
+            transcriptionQueueCleanupRequest =
+                MeetingTranscriptionQueueCleanupRequest(
+                    run: plan.run,
+                    sourcePath: plan.sourcePath
+                )
 
             if meetingContextController.meetingIDs.contains(
                 selectedMeeting.id
@@ -2130,5 +2160,32 @@ private struct StatusBadge: View {
                 .fill(.quaternary)
         )
         .fixedSize()
+    }
+}
+
+private struct MeetingTranscriptionQueueCleanupRequest: Equatable {
+    let id = UUID()
+    let run: String
+    let sourcePath: String?
+}
+
+private struct MeetingTranscriptionQueueCleanupBridge: View {
+    @EnvironmentObject
+    private var transcriptionController: TranscriptionController
+
+    let request: MeetingTranscriptionQueueCleanupRequest?
+
+    var body: some View {
+        Color.clear
+            .onChange(of: request?.id) {
+                guard let request else {
+                    return
+                }
+
+                transcriptionController.removeMeetingReference(
+                    run: request.run,
+                    sourcePath: request.sourcePath
+                )
+            }
     }
 }

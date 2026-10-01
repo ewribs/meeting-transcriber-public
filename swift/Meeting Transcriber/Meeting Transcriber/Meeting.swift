@@ -120,6 +120,21 @@ nonisolated struct MeetingDetail: Decodable, Sendable {
 }
 
 
+nonisolated enum MeetingDeleteOperation: Sendable {
+    case keepRecording
+    case deleteRecording
+
+    var deletesManagedRecording: Bool {
+        switch self {
+        case .keepRecording:
+            return false
+        case .deleteRecording:
+            return true
+        }
+    }
+}
+
+
 nonisolated struct MeetingDeletePlanResponse: Decodable, Sendable {
     let schemaVersion: Int
     let run: String

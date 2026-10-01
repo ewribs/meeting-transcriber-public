@@ -119,4 +119,9 @@ struct Meeting_TranscriberTests {
         #expect(normalized.contains("- lowercase topic text should remain unchanged."))
     }
 
+    @Test func meetingDeleteOperationKeepsRecordingByDefaultPath() {
+        #expect(!MeetingDeleteOperation.keepRecording.deletesManagedRecording)
+        #expect(MeetingDeleteOperation.deleteRecording.deletesManagedRecording)
+    }
+
 }
