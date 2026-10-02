@@ -241,6 +241,30 @@ command-line build:
 ./tools/setup/bootstrap_macos.sh --build-swift
 ```
 
+### Install the native app for normal Dock use
+
+After setup is complete, build and install a Release copy into `~/Applications`:
+
+```bash
+tools/install_local_app.sh
+```
+
+The helper builds the app first, records the current repository in Application
+Support `install.json`, safely replaces the previously installed app only after a
+successful build, and launches the installed copy. Pin **Meeting Transcriber** to
+the Dock with **Options > Keep in Dock**. Xcode does not need to remain open for
+normal use.
+
+To install elsewhere:
+
+```bash
+tools/install_local_app.sh --destination /Applications
+```
+
+The installed `.app` is the native frontend. The Python backend and virtualenv
+remain in the configured repository, so rerun the helper after native Swift code
+changes to refresh the installed app.
+
 ## Validate the installation
 
 Read-only validation:

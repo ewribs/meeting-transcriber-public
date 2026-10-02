@@ -16,3 +16,10 @@ dry-run/check capable, `configure_install.py` writes local Application Support
 configuration, `validate_install.py` performs read-only diagnostics, and
 `install_from_github.sh` can clone/update the public repository before setup.
 See `docs/SETUP_AND_SECURITY.md` before use.
+
+## Native app install
+
+`install_local_app.sh` builds a Release copy of the Swift app, records the current
+repository path for the Python backend, installs the app into `~/Applications` by
+default, and launches it for normal Dock use. It does not package private meeting
+data or local identity files.

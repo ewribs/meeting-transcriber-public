@@ -128,10 +128,14 @@ nonisolated struct BackendService: Sendable {
             Self.resolveProjectDirectory()
     }
 
-    private static func resolveProjectDirectory() -> URL {
-        let environment =
-            ProcessInfo.processInfo.environment
-
+    static func resolveProjectDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        supportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
         if let override = environment[
             "MEETING_TRANSCRIBER_PROJECT_DIR"
         ]?.trimmingCharacters(
@@ -144,12 +148,6 @@ nonisolated struct BackendService: Sendable {
                 isDirectory: true
             )
         }
-
-        let supportDirectory =
-            FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first
 
         if let configURL = supportDirectory?
             .appendingPathComponent(
@@ -181,8 +179,7 @@ nonisolated struct BackendService: Sendable {
             )
         }
 
-        return FileManager.default
-            .homeDirectoryForCurrentUser
+        return homeDirectory
             .appendingPathComponent(
                 "Projects/meeting-transcriber",
                 isDirectory: true

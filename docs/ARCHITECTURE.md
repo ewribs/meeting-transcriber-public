@@ -21,7 +21,7 @@ The main workspaces are:
 - Sessions
 - Search
 
-`BackendService.swift` launches the Python bridge at `backend_bridge.py` using the repository's `.venv/bin/python`. The repository location is resolved from `MEETING_TRANSCRIBER_PROJECT_DIR`, then Application Support `install.json`, with `~/Projects/meeting-transcriber` retained only as a compatibility fallback.
+`BackendService.swift` launches the Python bridge at `backend_bridge.py` using the repository's `.venv/bin/python`. `BackendService` and `TranscriptionService` share the same repository resolver: `MEETING_TRANSCRIBER_PROJECT_DIR`, then Application Support `install.json`, with `~/Projects/meeting-transcriber` retained only as a compatibility fallback.
 
 ## Python bridge
 

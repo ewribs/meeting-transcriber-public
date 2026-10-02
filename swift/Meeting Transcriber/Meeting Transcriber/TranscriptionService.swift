@@ -48,13 +48,8 @@ final class TranscriptionService:
     private var activeProcess: Process?
 
     init() {
-        let username = NSUserName()
-
-        self.projectDirectory = URL(
-            fileURLWithPath:
-                "/Users/\(username)/Projects/meeting-transcriber",
-            isDirectory: true
-        )
+        self.projectDirectory =
+            BackendService.resolveProjectDirectory()
     }
 
     nonisolated func cancelActiveProcess() {

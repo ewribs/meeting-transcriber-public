@@ -124,4 +124,16 @@ struct Meeting_TranscriberTests {
         #expect(MeetingDeleteOperation.deleteRecording.deletesManagedRecording)
     }
 
+    @Test func projectDirectoryResolverHonorsEnvironmentOverride() {
+        let resolved = BackendService.resolveProjectDirectory(
+            environment: [
+                "MEETING_TRANSCRIBER_PROJECT_DIR": "/tmp/meeting-transcriber-test"
+            ],
+            supportDirectory: nil,
+            homeDirectory: URL(fileURLWithPath: "/tmp/home", isDirectory: true)
+        )
+
+        #expect(resolved.path == "/tmp/meeting-transcriber-test")
+    }
+
 }
