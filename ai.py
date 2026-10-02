@@ -2018,6 +2018,147 @@ def _questions_are_near_duplicates(left: str, right: str) -> bool:
     return overlap / min(len(left_tokens), len(right_tokens)) >= 0.75
 
 
+_OPAQUE_QUESTION_REFERENT_PATTERN = re.compile(
+    r"\b(?:it|that|this|these|those)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _open_question_is_self_contained(question: str) -> bool:
+    """Return False when a durable question depends on an opaque referent.
+
+    Open Questions are working memory. A reader should understand the item later
+    without reopening the transcript, so a question such as "Did that get
+    extended?" is not durable unless the antecedent is made explicit.
+    """
+
+    return not bool(_OPAQUE_QUESTION_REFERENT_PATTERN.search(question or ""))
+
+
+def _contextualize_open_question(question: str, transcript: str) -> str | None:
+    """Resolve a narrow opaque Open Question from immediate transcript context.
+
+    Only recover the antecedent when the nearby transcript itself states a
+    parallel "<subject>, whether/if that was <verb> ..." construction. This
+    keeps the rewrite deterministic and conservative. If the antecedent is not
+    explicit enough to recover safely, omit the question.
+    """
+
+    cleaned = re.sub(r"\s+", " ", str(question or "")).strip()
+    if not cleaned or not _is_well_formed_question(cleaned):
+        return None
+    if _open_question_is_self_contained(cleaned):
+        return cleaned
+
+    if not transcript:
+        return None
+    start = transcript.find(cleaned)
+    if start < 0:
+        return None
+
+    question_match = re.search(
+        r"^(?:(?:do|did)\s+(?:you|we|they)\s+know\s+if\s+|"
+        r"can\s+(?:you|we|they)\s+confirm\s+(?:if|whether)\s+|"
+        r"(?:is|was)\s+it\s+clear\s+(?:if|whether)\s+|"
+        r"(?:did|does|do|was|is|has|have)\s+)"
+        r"(?:that|it|this)\s+"
+        r"(?:(?:got|get|was|is|has\s+been|have\s+been|will\s+be)\s+)?"
+        r"(?P<verb>[A-Za-z][A-Za-z'-]*)\b",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if not question_match:
+        return None
+
+    verb = question_match.group("verb")
+    block_start = max(
+        transcript.rfind("**Mic**", 0, start),
+        transcript.rfind("**Remote**", 0, start),
+    )
+    context_start = max(block_start, start - 420)
+    before = re.sub(r"\s+", " ", transcript[context_start:start]).strip()
+
+    # Require the same predicate in an explicit nearby antecedent construction.
+    antecedent_pattern = re.compile(
+        r"(?P<subject>(?:the|a|an|our|your|their)\s+"
+        r"[A-Za-z0-9%][A-Za-z0-9%&/()' -]{1,70})\s*,\s*"
+        r"(?:whether\s+or\s+not|whether|if)\s+"
+        r"(?:that|it|this)\s+"
+        r"(?:(?:was|is|got|gets?|has\s+been|will\s+be)\s+)"
+        + re.escape(verb) +
+        r"(?P<tail>[^,.?]{0,80})",
+        flags=re.IGNORECASE,
+    )
+    matches = list(antecedent_pattern.finditer(before))
+    if not matches:
+        return None
+
+    match = matches[-1]
+    subject = re.sub(r"\s+", " ", match.group("subject")).strip(" ,")
+    subject = re.sub(
+        r"^(The|A|An|Our|Your|Their)\b",
+        lambda article: article.group(1).casefold(),
+        subject,
+    )
+    tail = re.sub(r"\s+", " ", match.group("tail")).strip(" ,")
+    tail = re.sub(r"\s+as\s+well$", "", tail, flags=re.IGNORECASE).strip()
+    if not subject or len(subject.split()) > 12:
+        return None
+
+    auxiliary = "Was"
+    if verb.casefold() in {"approved", "included", "extended", "renewed", "signed",
+                           "finalized", "completed", "confirmed", "changed", "updated"}:
+        rewritten = f"{auxiliary} {subject} {verb}"
+    else:
+        return None
+    if tail:
+        rewritten += f" {tail}"
+    rewritten = rewritten.rstrip(" .?") + "?"
+    return rewritten if _is_well_formed_question(rewritten) else None
+
+
+_STRONG_UNRESOLVED_CONTEXT_PATTERN = re.compile(
+    r"\b(?:still\s+open|open\s+question|unclear|not\s+clear|"
+    r"don['’]t\s+know(?:\s+yet)?|do\s+not\s+know(?:\s+yet)?|"
+    r"not\s+sure|need\s+to\s+(?:confirm|validate|find\s+out|clarify)|"
+    r"want\s+to\s+(?:confirm|validate|make\s+sure|clarify)|"
+    r"(?:i\s+)?(?:will|['’]ll|have\s+to)\s+(?:double\s+check|verify|confirm)|"
+    r"(?:i\s+)?(?:will|['’]ll)\s+reach\s+out\b.{0,80}\b(?:see|confirm)\b|"
+    r"not\s+addressed|hasn['’]t\s+been\s+addressed|"
+    r"have\s+yet\s+to\s+(?:determine|confirm|resolve))\b",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _direct_answer_remains_uncertain(text: str) -> bool:
+    """Return True when a nominal direct answer immediately hedges itself.
+
+    Examples such as "Yeah, it should have; I'll double check" are not durable
+    answers even though they begin with a yes/no acknowledgement. Keep this
+    deliberately local so a later, unrelated "don't know" does not reopen an
+    otherwise answered question.
+    """
+
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not re.match(
+        r"^(?:yes|no|yep|yeah|correct|right|sure|okay|ok)\b",
+        compact,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    local = compact[:180]
+    return bool(
+        re.search(
+            r"\b(?:should|might|may|probably|possibly)\b.{0,90}"
+            r"\b(?:double\s+check|verify|confirm|check)\b|"
+            r"\b(?:i\s+)?(?:will|['’]ll|have\s+to)\s+"
+            r"(?:double\s+check|verify|confirm|check)\b",
+            local,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+
+
 def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     """Reject questions that are immediately answered or used rhetorically.
 
@@ -2045,11 +2186,11 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
         return True
     after = transcript[start + len(question): start + len(question) + 700]
 
-    if _UNRESOLVED_CONTEXT_PATTERN.search(after[:420]):
-        return True
-
-    # If the same speaker keeps talking after asking the question, the question
-    # is often rhetorical/context-setting rather than an unresolved item.
+    # If the same transcript block continues with a substantive response, treat
+    # the question as answered/context-setting unless that immediate continuation
+    # explicitly says the answer is still unknown. Channel-based transcripts can
+    # contain more than one human voice in one Remote block, so this also catches
+    # question/answer exchanges that have no intervening speaker marker.
     same_turn = re.split(
         r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
         after,
@@ -2058,6 +2199,17 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     )[0]
     same_turn_words = re.findall(r"[A-Za-z0-9&'-]+", same_turn)
     if len(same_turn_words) >= 7:
+        compact_same_turn = re.sub(r"\s+", " ", same_turn).strip(" -–—")
+        if _direct_answer_remains_uncertain(compact_same_turn):
+            return True
+        if re.match(
+            r"^(?:yes|no|yep|yeah|correct|right|sure|okay|ok)\b",
+            compact_same_turn,
+            flags=re.IGNORECASE,
+        ):
+            return False
+        if _STRONG_UNRESOLVED_CONTEXT_PATTERN.search(same_turn[:260]):
+            return True
         return False
 
     # A concise direct response in the next exchange closes the question.
@@ -2068,7 +2220,9 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     )
     if next_turn:
         response = re.sub(r"\s+", " ", next_turn.group("text")).strip()
-        if _UNRESOLVED_CONTEXT_PATTERN.search(response[:220]):
+        if _direct_answer_remains_uncertain(response):
+            return True
+        if _STRONG_UNRESOLVED_CONTEXT_PATTERN.search(response[:220]):
             return True
         if re.match(
             r"^(?:yes|no|yep|yeah|correct|right|sure|okay|ok|"
@@ -2197,9 +2351,11 @@ _UNRESOLVED_CONTEXT_PATTERN = re.compile(
     r"(?:going\s+to|need\s+to|want\s+to)\s+(?:ask|request)|"
     r"need\s+to\s+(?:confirm|validate|find\s+out|clarify)|"
     r"want\s+to\s+(?:confirm|validate|make\s+sure|clarify)|"
+    r"(?:i\s+)?(?:will|['’]ll|have\s+to)\s+(?:double\s+check|verify|confirm)|"
+    r"(?:i\s+)?(?:will|['’]ll)\s+reach\s+out\b.{0,80}\b(?:see|confirm)\b|"
     r"not\s+addressed|hasn['’]t\s+been\s+addressed|"
     r"have\s+yet\s+to\s+(?:determine|confirm|resolve))\b",
-    flags=re.IGNORECASE,
+    flags=re.IGNORECASE | re.DOTALL,
 )
 
 _QUESTION_START_PATTERN = re.compile(
@@ -2280,7 +2436,7 @@ def _explicit_unresolved_question_fallbacks(chunk: str) -> list[str]:
             r"i\s+(?:would\s+)?presume)\b",
             after,
             flags=re.IGNORECASE,
-        ):
+        ) and not _direct_answer_remains_uncertain(after):
             continue
 
         recovered.append(question)
@@ -2507,8 +2663,19 @@ def _recover_explicit_removal_decisions(transcript: str) -> list[dict]:
     )
 
     recovered = []
+    speaker_marker = re.compile(
+        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+        flags=re.IGNORECASE,
+    )
     for match in removal.finditer(transcript):
-        context_start = max(0, match.start() - 240)
+        # A decision cue may only govern a removal inside the same transcript
+        # speaker block. Looking backward across a speaker boundary can pair an
+        # unrelated phrase such as "I'm going to..." with a later "drop those"
+        # and manufacture a decision.
+        turn_start = 0
+        for marker in speaker_marker.finditer(transcript, 0, match.start()):
+            turn_start = marker.end()
+        context_start = max(turn_start, match.start() - 240)
         before = transcript[context_start:match.start()]
         cue_matches = list(decision_cue.finditer(before))
         if not cue_matches:
@@ -2539,6 +2706,11 @@ def _recover_explicit_removal_decisions(transcript: str) -> list[dict]:
         if entity.casefold() in {
             "over", "back", "through", "across", "down", "up", "off",
             "out", "cost", "costs", "spend", "work", "scope",
+            # Pronouns/demonstratives are not durable removal entities. They
+            # commonly occur in ordinary directives ("drop me the names") or
+            # historical explanations ("you dropped those").
+            "me", "you", "us", "him", "her", "them", "it",
+            "this", "that", "these", "those",
         }:
             continue
         recovered.append({"decision": f"Drop {entity}.", "evidence": evidence})
@@ -3064,13 +3236,16 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         transcript,
     )
 
-    memory["open_questions"] = [
-        question
-        for question in _normalize_open_questions(
-            [str(question) for question in memory.get("open_questions", [])]
-        )
-        if _question_is_locally_unresolved(question, transcript)
-    ]
+    reconciled_questions = []
+    for question in _normalize_open_questions(
+        [str(question) for question in memory.get("open_questions", [])]
+    ):
+        if not _question_is_locally_unresolved(question, transcript):
+            continue
+        durable_question = _contextualize_open_question(question, transcript)
+        if durable_question:
+            reconciled_questions.append(durable_question)
+    memory["open_questions"] = _normalize_open_questions(reconciled_questions)
 
     reconciled_commitments = []
     for item in memory.get("commitments", []):
@@ -3151,6 +3326,90 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         topic["summary"] = topic_summary or _fallback_topic_summary(topic)
 
     return memory
+
+
+def _transcript_channel_for_evidence(evidence: str, transcript: str) -> str | None:
+    """Return the enclosing Mic/Remote channel for exact evidence, if known."""
+
+    if not evidence or not transcript:
+        return None
+    index = transcript.find(evidence)
+    if index < 0:
+        return None
+    prefix = transcript[:index]
+    matches = list(
+        re.finditer(
+            r"\[\d{1,2}:\d{2}\]\s+\*\*(Mic|Remote)\*\*",
+            prefix,
+            flags=re.IGNORECASE,
+        )
+    )
+    if not matches:
+        return None
+    return matches[-1].group(1)
+
+
+def _explicit_commitment_fallbacks(chunk: str) -> list[dict]:
+    """Recover unmistakable self-declared action items the model omitted.
+
+    This fallback is intentionally narrow. It targets explicit action-item
+    language rather than generic future tense so deterministic recovery does not
+    turn intentions or suggestions into commitments.
+    """
+
+    marker = re.compile(
+        r"\[(?P<time>\d{1,2}:\d{2})\]\s+\*\*(?P<speaker>Mic|Remote)\*\*",
+        flags=re.IGNORECASE,
+    )
+    matches = list(marker.finditer(chunk))
+    spans: list[tuple[str, str]] = []
+    if matches:
+        for index, match in enumerate(matches):
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(chunk)
+            spans.append((match.group("speaker"), chunk[start:end]))
+    else:
+        spans.append(("Unknown", chunk))
+
+    cue = re.compile(
+        r"\b(?:"
+        r"i\s+(?:will|['’]ll)\s+take\s+(?:the|an?)\s+action(?:\s+item)?\s+to|"
+        r"i\s+have\s+an?\s+action\s+item\s+(?:to|:)|"
+        r"my\s+action\s+item\s+is\s+to"
+        r")\s+(?P<action>[^.!?\n]+)",
+        flags=re.IGNORECASE,
+    )
+
+    recovered: list[dict] = []
+    for speaker, body in spans:
+        compact = re.sub(r"\s+", " ", body).strip()
+        for match in cue.finditer(compact):
+            action = match.group("action").strip(" -,:;")
+            # Keep only the committed clause. A following "and then you can..."
+            # is another person's optional step and should not pollute the action.
+            action = re.split(
+                r"\s+(?:and\s+then|then)\s+(?:you|they|he|she|we)\b",
+                action,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0].strip(" -,:;")
+            if not action:
+                continue
+            evidence = compact[match.start():match.start("action") + len(action)].strip()
+            if not _commitment_is_actionable(action, evidence):
+                continue
+            if not _commitment_action_is_self_contained(action):
+                continue
+            owner = SELF_NAME if speaker.casefold() == SELF_SPEAKER_LABEL.casefold() else "Unknown"
+            recovered.append(
+                {
+                    "owner": owner,
+                    "action": action[0].upper() + action[1:] if action else action,
+                    "status": "open",
+                    "evidence": evidence,
+                }
+            )
+    return _deduplicate_commitments(recovered)
 
 
 def extract_grounded_commitments_and_decisions(
@@ -3354,6 +3613,9 @@ Return ONLY JSON matching the required schema.
 COMMITMENTS:
 - Include only when a participant explicitly agrees to perform
   a future action.
+- Treat explicit action-item language such as "I have an action item to..."
+  or "I will take the action to..." as a strong commitment signal when the
+  action itself is concrete and still remains to be done.
 - The evidence field MUST contain exact words copied from the
   transcript.
 - Keep the evidence quote as short as possible while still
@@ -3401,8 +3663,9 @@ DECISIONS:
   transcript.
 - Keep the evidence quote as short as possible while still
   proving the decision.
-- Do not treat opinions, proposals, questions, concerns, or
-  unresolved discussion as decisions.
+- Do not treat opinions, proposals, questions, concerns, historical
+  descriptions, or ordinary directives as decisions. Phrases such as
+  "you dropped those last year" or "drop me the names" are not decisions.
 - The decision field may be a concise paraphrase, but must not
   add information not supported by the evidence.
 
@@ -3424,9 +3687,16 @@ OPEN QUESTIONS:
 - Preserve a real business question when nearby discussion says the matter
   is still open, unclear, not addressed, or needs confirmation/validation,
   even if the transcript punctuation is imperfect.
-- Do not retain a question that is directly answered later in the section.
+- Do not retain a question that is directly answered later in the section,
+  including when the answer appears immediately afterward in the same transcript
+  speaker/channel block.
 - Do not turn missing detail, uncertainty, or an analyst's desire
   for more information into a question.
+- The durable question must be self-contained enough to understand later
+  without reopening the transcript. If the evidence says only "Did that get
+  extended?" or uses another opaque referent such as "it", "this",
+  "these", or "those", resolve the concrete subject only when it is
+  explicit in the immediately nearby transcript; otherwise omit the question.
 - The evidence field MUST contain the exact question copied from
   the transcript.
 
@@ -3532,26 +3802,25 @@ Transcript section:
                 )
             ).strip()
 
-            if (
-                raw_owner.lower()
-                == SELF_SPEAKER_LABEL.lower()
-            ):
+            evidence_channel = _transcript_channel_for_evidence(
+                evidence_text,
+                chunk,
+            )
+
+            if evidence_channel and evidence_channel.casefold() == SELF_SPEAKER_LABEL.casefold():
                 resolved_owner = SELF_NAME
-
-            elif (
-                raw_owner.lower()
-                == "remote"
-                and remote_participant
-            ):
-                resolved_owner = (
-                    remote_participant
-                )
-
+            elif evidence_channel and evidence_channel.casefold() == "remote":
+                # A Remote channel can contain several people. A model-provided
+                # person name is not enough to prove which remote participant
+                # uttered a first-person commitment. Preserve the action while
+                # keeping ownership conservative.
+                resolved_owner = "Unknown"
+            elif raw_owner.lower() == SELF_SPEAKER_LABEL.lower():
+                resolved_owner = SELF_NAME
+            elif raw_owner.lower() == "remote":
+                resolved_owner = "Unknown"
             else:
-                resolved_owner = (
-                    raw_owner
-                    or "Unknown"
-                )
+                resolved_owner = raw_owner or "Unknown"
 
             action_text = str(
                 item.get(
@@ -3595,6 +3864,18 @@ Transcript section:
                     "evidence": evidence_text,
                 }
             )
+
+        existing_commitment_evidence = {
+            str(item.get("evidence", "")).casefold()
+            for item in validated_commitments
+            if isinstance(item, dict)
+        }
+        for fallback_commitment in _explicit_commitment_fallbacks(chunk):
+            evidence_key = str(fallback_commitment.get("evidence", "")).casefold()
+            if evidence_key in existing_commitment_evidence:
+                continue
+            validated_commitments.append(fallback_commitment)
+            existing_commitment_evidence.add(evidence_key)
 
         decisions = result.get(
             "decisions",
@@ -3726,15 +4007,16 @@ Transcript section:
             if not _question_is_locally_unresolved(evidence_text, chunk):
                 continue
 
-            grounded_question = evidence_text
-            if grounded_question not in validated_open_questions:
+            grounded_question = _contextualize_open_question(evidence_text, chunk)
+            if grounded_question and grounded_question not in validated_open_questions:
                 validated_open_questions.append(grounded_question)
 
         for fallback_question in _explicit_unresolved_question_fallbacks(chunk):
             if not _question_is_locally_unresolved(fallback_question, chunk):
                 continue
-            if fallback_question not in validated_open_questions:
-                validated_open_questions.append(fallback_question)
+            durable_question = _contextualize_open_question(fallback_question, chunk)
+            if durable_question and durable_question not in validated_open_questions:
+                validated_open_questions.append(durable_question)
 
         follow_ups = result.get(
             "follow_ups",

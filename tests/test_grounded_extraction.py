@@ -1194,5 +1194,181 @@ class GroundedExtractionTests(unittest.TestCase):
         )
 
 
+    def test_precision_v10_rejects_pronominal_drop_directives_as_decisions(self):
+        transcript = (
+            "[01:00] **Mic**\n\nI'm going to show the current plan.\n\n"
+            "[01:10] **Remote**\n\nYou deliberately drop those when usage falls.\n\n"
+            "[01:20] **Mic**\n\nJust drop me the names when you have them."
+        )
+        self.assertEqual(ai._recover_explicit_removal_decisions(transcript), [])
+
+    def test_precision_v10_recovers_explicit_action_item_when_model_omits_it(self):
+        transcript = (
+            "[01:00] **Remote**\n\n"
+            "I will take the action to draft an email on Platform Beta and then you can edit it."
+        )
+        recovered = ai._explicit_commitment_fallbacks(transcript)
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0]["owner"], "Unknown")
+        self.assertEqual(recovered[0]["action"], "Draft an email on Platform Beta")
+        self.assertEqual(
+            recovered[0]["evidence"],
+            "I will take the action to draft an email on Platform Beta",
+        )
+
+    def test_precision_v10_recovers_i_have_an_action_item_wording(self):
+        transcript = "I have an action item to send the revised workbook to Finance."
+        recovered = ai._explicit_commitment_fallbacks(transcript)
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(
+            recovered[0]["action"],
+            "Send the revised workbook to Finance",
+        )
+
+    def test_precision_v10_rejects_same_block_question_that_is_answered(self):
+        transcript = (
+            "How are you doing with Platform Beta capacity? "
+            "We reduced the additional capacity to one thousand units after optimization."
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved(
+                "How are you doing with Platform Beta capacity?", transcript
+            )
+        )
+
+    def test_precision_v10_rejects_immediately_answered_question_even_with_later_unknown_phrase(self):
+        transcript = (
+            "Have you heard that as well? No, they do negotiate. "
+            "If you don't know your baseline, it is hard to build the strategy."
+        )
+        self.assertFalse(
+            ai._question_is_locally_unresolved("Have you heard that as well?", transcript)
+        )
+
+    def test_precision_v10_keeps_explicitly_unresolved_question(self):
+        transcript = (
+            "Have you heard whether Platform Beta will change? "
+            "I don't know yet; we need to confirm with the product team."
+        )
+        self.assertTrue(
+            ai._question_is_locally_unresolved(
+                "Have you heard whether Platform Beta will change?", transcript
+            )
+        )
+
+    def test_precision_v101_keeps_yes_answer_that_requires_double_check(self):
+        transcript = (
+            "Do you know if the extension includes the price protection? "
+            "Yeah, it should have. I'll have to double check to make sure it is included."
+        )
+        self.assertTrue(
+            ai._question_is_locally_unresolved(
+                "Do you know if the extension includes the price protection?", transcript
+            )
+        )
+
+    def test_precision_v101_fallback_recovers_question_with_tentative_yes_answer(self):
+        transcript = (
+            "Do you know if the extension includes the price protection? "
+            "Yeah, it should have. I'll have to double check to make sure it is included."
+        )
+        self.assertEqual(
+            ai._explicit_unresolved_question_fallbacks(transcript),
+            ["Do you know if the extension includes the price protection?"],
+        )
+
+    def test_precision_v101_keeps_tentatively_answered_owner_question(self):
+        transcript = (
+            "[40:46] **Mic**\n\nWho owns the Platform Beta admin portal?\n\n"
+            "[40:49] **Remote**\n\nPlatform Operations would be Team Delta. "
+            "I think it's them; I'll reach out and see if they do or if it's somebody else."
+        )
+        self.assertTrue(
+            ai._question_is_locally_unresolved(
+                "Who owns the Platform Beta admin portal?", transcript
+            )
+        )
+
+
+    def test_precision_v102_contextualizes_opaque_open_question(self):
+        transcript = (
+            "[12:00] **Remote**\n\n"
+            "The 10% price cap, whether or not that was extended into the renewal, "
+            "is something we still need to verify. Do you know if that got extended? "
+            "Yeah, it should have. I'll have to double check to make sure it was included."
+        )
+        self.assertEqual(
+            ai._contextualize_open_question(
+                "Do you know if that got extended?", transcript
+            ),
+            "Was the 10% price cap extended into the renewal?",
+        )
+
+    def test_precision_v102_omits_opaque_open_question_without_clear_antecedent(self):
+        transcript = (
+            "[12:00] **Remote**\n\n"
+            "We talked through several renewal items. Do you know if that got extended? "
+            "I'm not sure; I'll have to verify."
+        )
+        self.assertIsNone(
+            ai._contextualize_open_question(
+                "Do you know if that got extended?", transcript
+            )
+        )
+
+    def test_precision_v102_reconcile_rewrites_question_for_durable_memory(self):
+        transcript = (
+            "[12:00] **Remote**\n\n"
+            "The 10% price cap, whether or not that was extended into the renewal, "
+            "is something we still need to verify. Do you know if that got extended? "
+            "Yeah, it should have. I'll have to double check to make sure it was included."
+        )
+        memory = {
+            "topics": [],
+            "commitments": [],
+            "decisions": [],
+            "risks": [],
+            "open_questions": ["Do you know if that got extended?"],
+            "follow_ups": [],
+        }
+        result = ai._reconcile_meeting_memory(memory, transcript)
+        self.assertEqual(
+            result["open_questions"],
+            ["Was the 10% price cap extended into the renewal?"],
+        )
+
+    def test_precision_v101_remote_model_commitment_owner_is_not_inferred(self):
+        transcript = (
+            "[01:00] **Remote**\n\n"
+            "I will take the action to draft the Platform Beta email."
+        )
+        original = ai.ask_llm
+        ai.ask_llm = lambda *args, **kwargs: json.dumps(
+            {
+                "commitments": [
+                    {
+                        "owner": "Speaker A",
+                        "action": "Draft the Platform Beta email",
+                        "evidence": "I will take the action to draft the Platform Beta email",
+                    }
+                ],
+                "decisions": [],
+                "risks": [],
+                "open_questions": [],
+                "follow_ups": [],
+            }
+        )
+        try:
+            result = ai.extract_grounded_commitments_and_decisions(
+                "Generic Meeting",
+                transcript,
+                participants=[{"name": "Speaker A"}],
+                chunk_words=1500,
+            )
+        finally:
+            ai.ask_llm = original
+        self.assertEqual(len(result["commitments"]), 1)
+        self.assertEqual(result["commitments"][0]["owner"], "Unknown")
+
 if __name__ == "__main__":
     unittest.main()
