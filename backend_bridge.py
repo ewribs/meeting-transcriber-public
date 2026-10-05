@@ -1636,6 +1636,12 @@ def save_favorite_prompts_payload(
     }
 
 
+
+def startup_retention_payload() -> dict[str, Any]:
+    from startup_maintenance import run_startup_retention
+
+    return run_startup_retention()
+
 def preferences_payload() -> dict[str, Any]:
     from app_settings import load_app_settings
     from config import ARCHIVE_DIR, OUTPUT_DIR
@@ -2276,6 +2282,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser(
+        "startup-retention",
+        help="Apply configured audio retention for app startup",
+    )
+
+    subparsers.add_parser(
         "preferences",
         help="Return current app preferences and model status",
     )
@@ -2489,6 +2500,9 @@ def main(argv: list[str] | None = None) -> int:
             payload = save_favorite_prompts_payload(
                 args.favorites_json
             )
+
+        elif args.command == "startup-retention":
+            payload = startup_retention_payload()
 
         elif args.command == "preferences":
             payload = preferences_payload()

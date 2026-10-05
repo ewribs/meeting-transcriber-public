@@ -186,6 +186,14 @@ nonisolated struct BackendService: Sendable {
             )
     }
 
+    func performStartupRetention() async throws {
+        _ = try await runBridge(
+            arguments: [
+                "startup-retention"
+            ]
+        )
+    }
+
     func loadPreferences()
         async throws
         -> PreferencesResponse

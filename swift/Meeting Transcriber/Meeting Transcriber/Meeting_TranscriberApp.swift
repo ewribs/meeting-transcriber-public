@@ -30,6 +30,9 @@ struct Meeting_TranscriberApp: App {
         AppNavigationController()
 
 
+    @State
+    private var didRunStartupMaintenance = false
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -48,6 +51,25 @@ struct Meeting_TranscriberApp: App {
                 .environmentObject(
                     appNavigationController
                 )
+                .task {
+                    guard !didRunStartupMaintenance else {
+                        return
+                    }
+
+                    didRunStartupMaintenance = true
+
+                    do {
+                        try await BackendService()
+                            .performStartupRetention()
+                    } catch {
+                        // Startup maintenance is deliberately non-fatal.
+                        // The app should still open when the archive volume
+                        // is unavailable or retention encounters an error.
+                        print(
+                            "Startup retention warning: \(error.localizedDescription)"
+                        )
+                    }
+                }
         }
 
         Settings {

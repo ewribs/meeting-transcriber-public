@@ -143,6 +143,21 @@ class BackendBridgeTests(unittest.TestCase):
             )
 
 
+
+    @patch("startup_maintenance.run_startup_retention")
+    def test_startup_retention_payload_uses_existing_maintenance(self, mock_run):
+        mock_run.return_value = {
+            "schema_version": 1,
+            "local": {"deleted": 2},
+            "archived": {"deleted": 0},
+            "warnings": [],
+        }
+
+        payload = backend_bridge.startup_retention_payload()
+
+        self.assertEqual(payload["local"]["deleted"], 2)
+        mock_run.assert_called_once_with()
+
     @patch("backend_bridge.load_meeting_catalog")
     def test_publish_meeting_uses_existing_workflow(
         self,

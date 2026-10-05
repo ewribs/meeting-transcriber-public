@@ -217,3 +217,19 @@ Publish & Archive
 - **Meeting Transcriber:** active meeting files, verified source archival, WAV cleanup, source-M4A retention, audit/reporting.
 - **Synology:** NAS recycle-bin retention and purge schedule.
 - **User/Development:** manual cleanup of intentionally retained development and Pilot Files.
+
+## Startup audio retention
+
+The native macOS app applies configured local and archived M4A retention once
+per app launch. This startup maintenance runs after the UI becomes available and
+is deliberately non-fatal: an unavailable archive volume or cleanup error does
+not prevent the app from opening. The existing post-Publish & Archive cleanup
+remains in place as an additional retention trigger.
+
+Local M4As are still deleted only when the normal archive safety checks pass.
+Legacy archives created before source-M4A archival can be repaired with
+`tools/maintenance/repair_legacy_audio_archives.py`. The repair tool is a dry
+run by default; `--apply` copies only recordings with exactly one complete
+matching archive, verifies the copy by size and SHA-256, and never deletes the
+local original. Missing, ambiguous, incomplete, or conflicting archives remain
+blocked.

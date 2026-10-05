@@ -23,3 +23,11 @@ See `docs/SETUP_AND_SECURITY.md` before use.
 repository path for the Python backend, installs the app into `~/Applications` by
 default, and launches it for normal Dock use. It does not package private meeting
 data or local identity files.
+
+### Legacy audio archive repair
+
+`maintenance/repair_legacy_audio_archives.py` backfills original source M4As
+into older complete archives that predate source-audio archival. It is a dry run
+by default. Use `--apply` only after reviewing the plan. The tool refuses
+no-match, multi-match, incomplete, or conflicting archive cases and does not
+delete local recordings.
