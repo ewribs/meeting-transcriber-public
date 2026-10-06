@@ -11,6 +11,115 @@ struct MeetingMarkdownView: View {
     }
 }
 
+
+struct MeetingMarkdownScrollView: NSViewRepresentable {
+    let markdown: String
+    let scrollToBottomToken: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        guard let textView = scrollView.documentView as? NSTextView else {
+            return scrollView
+        }
+
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 0, height: 0)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+
+        context.coordinator.textView = textView
+        context.coordinator.scrollView = scrollView
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else {
+            return
+        }
+
+        let contentChanged = context.coordinator.lastMarkdown != markdown
+        if contentChanged {
+            textView.textStorage?.setAttributedString(
+                MarkdownRenderer.render(markdown)
+            )
+            context.coordinator.lastMarkdown = markdown
+        }
+
+        resizeDocumentView(textView, in: scrollView)
+
+        let shouldScroll =
+            context.coordinator.lastScrollToBottomToken
+            != scrollToBottomToken
+
+        if shouldScroll {
+            context.coordinator.lastScrollToBottomToken = scrollToBottomToken
+            DispatchQueue.main.async {
+                self.resizeDocumentView(textView, in: scrollView)
+                textView.scrollToEndOfDocument(nil)
+            }
+        }
+    }
+
+    private func resizeDocumentView(
+        _ textView: NSTextView,
+        in scrollView: NSScrollView
+    ) {
+        let width = max(scrollView.contentSize.width, 1)
+
+        guard
+            let textContainer = textView.textContainer,
+            let layoutManager = textView.layoutManager
+        else {
+            return
+        }
+
+        if abs(textView.frame.width - width) > 0.5 {
+            textView.frame.size.width = width
+        }
+
+        textContainer.containerSize = NSSize(
+            width: width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textContainer.widthTracksTextView = true
+
+        layoutManager.ensureLayout(for: textContainer)
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let height = max(
+            scrollView.contentSize.height,
+            ceil(usedRect.maxY + (textView.textContainerInset.height * 2))
+        )
+
+        if abs(textView.frame.height - height) > 0.5 {
+            textView.frame.size.height = height
+        }
+    }
+
+    final class Coordinator {
+        weak var textView: NSTextView?
+        weak var scrollView: NSScrollView?
+        var lastMarkdown: String?
+        var lastScrollToBottomToken: Int?
+    }
+}
+
 struct SelectableStructuredTextView: View {
     let text: String
 

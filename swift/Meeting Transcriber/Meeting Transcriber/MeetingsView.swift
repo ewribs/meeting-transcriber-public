@@ -905,65 +905,38 @@ struct MeetingsView: View {
 
                 Divider()
 
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(
-                            alignment: .leading,
-                            spacing: 14
-                        ) {
-                            if contextConversation
-                                .isEmpty {
-                                MeetingMarkdownView(
-                                    markdown:
-                                        "## Context Ready\n\n\(builtContext.prepText)"
-                                )
-                            } else {
-                                MeetingMarkdownView(
-                                    markdown:
-                                        meetingContextConversationMarkdown
-                                )
-                            }
+                VStack(spacing: 0) {
+                    MeetingMarkdownScrollView(
+                        markdown: contextConversation.isEmpty
+                            ? "## Context Ready\n\n\(builtContext.prepText)"
+                            : meetingContextConversationMarkdown,
+                        scrollToBottomToken: contextConversation.count
+                    )
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 18)
 
-                            if isRunningContextQuery {
-                                HStack(spacing: 10) {
-                                    ProgressView()
-                                        .controlSize(.small)
+                    if isRunningContextQuery {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .controlSize(.small)
 
-                                    Text(
-                                        "Qwen is working…"
-                                    )
-                                    .foregroundStyle(
-                                        .secondary
-                                    )
-                                }
-                            }
+                            Text("Qwen is working…")
+                                .foregroundStyle(.secondary)
 
-                            Color.clear
-                                .frame(height: 1)
-                                .id(
-                                    "meeting-context-bottom"
-                                )
+                            Spacer()
                         }
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .leading
-                        )
                         .padding(.horizontal, 24)
-                        .padding(.vertical, 18)
-                    }
-                    .onChange(
-                        of:
-                            contextConversation
-                                .count
-                    ) {
-                        withAnimation {
-                            proxy.scrollTo(
-                                "meeting-context-bottom",
-                                anchor: .bottom
-                            )
-                        }
+                        .padding(.bottom, 10)
                     }
                 }
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity
+                )
 
                 Divider()
 
@@ -1015,6 +988,8 @@ struct MeetingsView: View {
             }
         }
     }
+
+
 
     private var meetingContextComposer:
         some View

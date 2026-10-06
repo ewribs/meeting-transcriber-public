@@ -59,6 +59,24 @@ def collect_grounded_sections(
             "topic_open_questions",
             {},
         ).items():
+            questions = [
+                str(
+                    item.get(
+                        "question",
+                        "",
+                    )
+                ).strip()
+                for item in items
+            ]
+            questions = [
+                question
+                for question in questions
+                if question
+            ]
+
+            if not questions:
+                continue
+
             topic_questions.append(
                 {
                     "topic_key": topic_key,
@@ -66,15 +84,27 @@ def collect_grounded_sections(
                         topic_key,
                         topic_key,
                     ),
-                    "questions": [
-                        item.get(
-                            "question",
-                            "",
-                        )
-                        for item in items
-                    ],
+                    "questions": questions,
                 }
             )
+
+        general_questions = [
+            str(
+                item.get(
+                    "question",
+                    "",
+                )
+            ).strip()
+            for item in merged_memory.get(
+                "unassigned_open_questions",
+                [],
+            )
+        ]
+        general_questions = [
+            question
+            for question in general_questions
+            if question
+        ]
 
     commitments = []
 
