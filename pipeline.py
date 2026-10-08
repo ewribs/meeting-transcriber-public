@@ -15,6 +15,7 @@ from ai import (
     extract_participants,
     build_complete_meeting_memory,
     compose_summary_with_meeting_memory,
+    get_last_memory_resolution_diagnostics,
 )
 
 from config import (
@@ -188,6 +189,19 @@ def run_meeting_memory(
         ),
         encoding="utf-8",
     )
+
+    runtime_path = run_dir / "processing_runtime.json"
+    diagnostics = get_last_memory_resolution_diagnostics()
+    if diagnostics:
+        try:
+            runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8")) if runtime_path.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            runtime_payload = {}
+        runtime_payload["memory_resolution"] = diagnostics
+        runtime_path.write_text(
+            json.dumps(runtime_payload, indent=2),
+            encoding="utf-8",
+        )
 
     return memory_path
 

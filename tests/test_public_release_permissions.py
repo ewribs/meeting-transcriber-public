@@ -84,6 +84,27 @@ class PublicReleasePermissionTests(unittest.TestCase):
             module.extract_zip_preserving_permissions
         )
 
+    def test_public_release_scrubs_xcode_team_and_provisioning_metadata(self):
+        module = load_module(
+            "build_public_release_signing_test",
+            "tools/build_public_release.py",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / module.PBXPROJ
+            project.parent.mkdir(parents=True, exist_ok=True)
+            project.write_text(
+                'DEVELOPMENT_' + 'TEAM = ABC123XYZ;\n'
+                'PROVISIONING_PROFILE_' + 'SPECIFIER = "Private Profile";\n'
+                'PRODUCT_BUNDLE_' + 'IDENTIFIER = "com.private.App";\n'
+            )
+            module.scrub_xcode_signing_metadata(root)
+            text = project.read_text()
+            self.assertIn('DEVELOPMENT_TEAM = "";', text)
+            self.assertIn('PROVISIONING_PROFILE_SPECIFIER = "";', text)
+            self.assertNotIn('ABC123XYZ', text)
+            self.assertNotIn('Private Profile', text)
+
 
 if __name__ == "__main__":
     unittest.main()

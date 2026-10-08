@@ -57,6 +57,14 @@ class ReleaseAuditTests(unittest.TestCase):
             findings = release_audit.audit_text(path, config)
         self.assertEqual(findings, [])
 
+    def test_xcode_development_team_is_public_release_warning(self):
+        path = self._write("project.pbxproj", 'DEVELOPMENT_' + 'TEAM = ABC123XYZ;\n')
+        config = {"sensitive_literals": [], "allowed_bundle_prefixes": ["com.example."]}
+        with patch.object(release_audit, "ROOT", self.root):
+            findings = release_audit.audit_text(path, config)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].code, "xcode-development-team")
+
     def test_private_config_loader_uses_public_safe_defaults_when_missing(self):
         config = release_audit.load_private_config(self.root / "missing.json")
         self.assertEqual(config["sensitive_literals"], [])

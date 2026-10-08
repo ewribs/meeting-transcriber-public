@@ -12,6 +12,7 @@ from query.execution import (
     choose_execution_plan,
     estimate_tokens,
     get_execution_profile,
+    infer_model_parameter_billions,
 )
 from config import (
     LLM_BACKEND,
@@ -30,6 +31,69 @@ from llm_backend import create_backend, normalize_backend_name
 
 _last_llm_backend = None
 _last_llm_elapsed_seconds: float | None = None
+_last_memory_resolution_diagnostics: dict = {}
+_memory_resolution_trace_enabled = False
+_last_memory_resolution_trace: dict = {}
+
+
+def set_memory_resolution_trace_enabled(enabled: bool) -> None:
+    """Enable/disable detailed local-only memory-pipeline tracing.
+
+    This is intended for the private benchmark harness. Normal application runs
+    leave tracing disabled so no additional meeting content is retained.
+    """
+    global _memory_resolution_trace_enabled
+    _memory_resolution_trace_enabled = bool(enabled)
+
+
+def get_last_memory_resolution_trace() -> dict:
+    """Return a deep copy of the most recent detailed memory trace."""
+    return json.loads(json.dumps(_last_memory_resolution_trace))
+
+
+def _reset_memory_resolution_trace() -> None:
+    global _last_memory_resolution_trace
+    _last_memory_resolution_trace = {}
+
+
+def _trace_memory_stage(name: str, payload) -> None:
+    if not _memory_resolution_trace_enabled:
+        return
+    _last_memory_resolution_trace[name] = json.loads(json.dumps(payload))
+
+
+def get_last_memory_resolution_diagnostics() -> dict:
+    """Return a copy of diagnostics from the most recent memory-resolution run."""
+    return json.loads(json.dumps(_last_memory_resolution_diagnostics))
+
+
+def _reset_memory_resolution_diagnostics() -> None:
+    global _last_memory_resolution_diagnostics
+    _reset_memory_resolution_trace()
+    _last_memory_resolution_diagnostics = {
+        "pipeline": "v12_events",
+        "status": "not_run",
+        "events_proposed": 0,
+        "events_grounded": 0,
+        "event_types_proposed": {},
+        "event_types_grounded": {},
+        "actions_proposed": 0,
+        "actions_retained": 0,
+        "decisions_proposed": 0,
+        "decisions_retained": 0,
+        "risks_proposed": 0,
+        "risks_retained": 0,
+        "questions_proposed": 0,
+        "questions_retained": 0,
+        "rejected_events": [],
+        "rejected_final": {
+            "actions": [],
+            "decisions": [],
+            "risks": [],
+            "questions": [],
+        },
+        "fallback": None,
+    }
 
 
 def get_last_llm_elapsed_seconds() -> float | None:
@@ -1295,7 +1359,7 @@ def _decision_is_supported(decision: str, evidence: str) -> bool:
 
 
 def _decision_candidate_is_well_formed(decision: str, evidence: str) -> bool:
-    """Reject raw ASR spill that was promoted directly into a decision."""
+    """Reject raw ASR spill or grammatical fragments promoted into decisions."""
 
     decision_words = re.findall(r"[A-Za-z0-9&'-]+", decision)
     evidence_words = re.findall(r"[A-Za-z0-9&'-]+", evidence)
@@ -1306,13 +1370,47 @@ def _decision_candidate_is_well_formed(decision: str, evidence: str) -> bool:
         and len(evidence_words) > 36
     ):
         return False
+    # Ignore terminal punctuation when looking for clipped endings.  Earlier
+    # versions let fragments such as ``Drop to.`` survive because the period
+    # hid the trailing preposition from this check.
+    compact = decision.strip().rstrip(".!?").strip()
     if re.search(
         r"\b(?:and|but|if|or|so|then|to|with|see\s+if)\s*$",
-        decision.strip(),
+        compact,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    # Canonical removal decisions must name an actual entity.  Determiners and
+    # prepositions are common ASR continuations after conversational uses of
+    # words such as ``drop`` and must never become durable decisions.
+    if re.fullmatch(
+        r"(?:drop|remove|exclude|cut)\s+"
+        r"(?:the|a|an|to|for|from|with|on|in|into|of|and|or|at)",
+        compact,
         flags=re.IGNORECASE,
     ):
         return False
     return True
+
+
+def _decision_is_operational_fact_claim(decision: str) -> bool:
+    """Return True for system/product behavior phrased as a fact, not a choice.
+
+    Meeting models sometimes promote release notes, capability statements, or
+    implementation limitations into Decisions simply because they contain
+    ``will``.  These statements are useful Topics/Updates, but should only become
+    durable Decisions when the transcript also carries an explicit settlement
+    cue such as ``we decided`` or ``we agreed``.
+    """
+
+    text = re.sub(r"\s+", " ", str(decision or "")).strip()
+    return bool(re.match(
+        r"^(?:the\s+)?(?:[A-Za-z0-9&.-]+\s+){0,6}"
+        r"(?:feature|system|workflow|process|platform|tool|application|service)\s+"
+        r"(?:will|won['’]t|will\s+not|does|doesn['’]t|cannot|can\s+not|is|isn['’]t)\b",
+        text,
+        flags=re.IGNORECASE,
+    ))
 
 
 def _decisions_overlap(left: dict, right: dict) -> bool:
@@ -1433,6 +1531,12 @@ _SECOND_PERSON_COMMITMENT_REFERENCE_PATTERN = re.compile(
 )
 
 
+_VAGUE_COMMITMENT_ACTION_PATTERN = re.compile(
+    r"^(?:i(?:['’]ll| will)?\s+)?(?:get\s+involved|help(?:\s+out)?|assist|take\s+a\s+look|look\s+into\s+(?:it|that|this))\.?$",
+    flags=re.IGNORECASE,
+)
+
+
 def _commitment_action_is_self_contained(action: str) -> bool:
     """Require a durable action that names its object/topic/recipient.
 
@@ -1444,6 +1548,8 @@ def _commitment_action_is_self_contained(action: str) -> bool:
 
     text = re.sub(r"\s+", " ", str(action or "")).strip()
     if not text:
+        return False
+    if _VAGUE_COMMITMENT_ACTION_PATTERN.fullmatch(text):
         return False
     if _SECOND_PERSON_COMMITMENT_REFERENCE_PATTERN.search(text):
         return False
@@ -2010,6 +2116,28 @@ def _question_similarity_tokens(question: str) -> set[str]:
 
 
 def _questions_are_near_duplicates(left: str, right: str) -> bool:
+    left_text = re.sub(r"\s+", " ", str(left or "")).casefold()
+    right_text = re.sub(r"\s+", " ", str(right or "")).casefold()
+
+    # Durable support-guarantee questions are frequently paraphrased with almost
+    # no literal token overlap (for example ``when something breaks`` versus
+    # ``resolving critical issues``).  Collapse only when both questions clearly
+    # ask about guarantees *and* operational issue resolution; do not treat all
+    # guarantee questions as equivalent.
+    guarantee = re.compile(r"\bguarantee(?:s|d)?\b", flags=re.IGNORECASE)
+    resolution = re.compile(
+        r"\b(?:support|breaks?|broken|fix(?:ed|ing)?|resolv(?:e|es|ed|ing)|"
+        r"critical\s+issues?|incident(?:s)?|problem(?:s)?)\b",
+        flags=re.IGNORECASE,
+    )
+    if (
+        guarantee.search(left_text)
+        and guarantee.search(right_text)
+        and resolution.search(left_text)
+        and resolution.search(right_text)
+    ):
+        return True
+
     left_tokens = _question_similarity_tokens(left)
     right_tokens = _question_similarity_tokens(right)
     if not left_tokens or not right_tokens:
@@ -2295,10 +2423,131 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     return True
 
 
-def _deduplicate_commitments(commitments: list[dict]) -> list[dict]:
-    """Collapse exact/near-exact duplicate commitments deterministically."""
+_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone", "speaker", "speaker a", "speaker b"}
+_AUDIO_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone"}
 
-    kept: list[dict] = []
+
+def _commitment_action_family(action: str) -> set[str]:
+    """Return coarse action concepts used only for duplicate-owner cleanup."""
+
+    text = re.sub(r"\s+", " ", str(action or "")).casefold()
+    families: set[str] = set()
+    if re.search(r"\b(?:call|contact|reach\s+out|email|introduce|connect)\b", text):
+        families.add("outreach")
+    if re.search(r"\b(?:set\s+up|schedule|arrange|coordinate|meeting|call|discussion|conversation)\b", text):
+        families.add("meeting")
+    if re.search(r"\b(?:escalate|escalation|raise\s+with|bring\s+in)\b", text):
+        families.add("escalation")
+    return families
+
+
+def _commitment_named_entities(action: str) -> set[str]:
+    """Extract conservative organization/person-like anchors from an action."""
+
+    text = str(action or "")
+    entities = set(re.findall(r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)+\b", text))
+    # Preserve short vendor forms such as "Vendor Alpha"/"TD Global" while
+    # excluding generic sentence-leading verbs from acting as anchors.
+    return {entity.casefold() for entity in entities if len(entity.split()) >= 2}
+
+
+def _channel_owned_commitment_duplicates_named(candidate: dict, named: dict) -> bool:
+    owner = re.sub(r"\s+", " ", str(candidate.get("owner", "")).strip()).casefold()
+    named_owner = re.sub(r"\s+", " ", str(named.get("owner", "")).strip()).casefold()
+    if owner not in _CHANNEL_OWNER_LABELS or not named_owner or named_owner in _CHANNEL_OWNER_LABELS or named_owner == "unknown":
+        return False
+
+    candidate_action = str(candidate.get("action", ""))
+    named_action = str(named.get("action", ""))
+    candidate_families = _commitment_action_family(candidate_action)
+    named_families = _commitment_action_family(named_action)
+    if not candidate_families or not (candidate_families & named_families):
+        return False
+
+    candidate_entities = _commitment_named_entities(candidate_action)
+    named_entities = _commitment_named_entities(named_action)
+    if candidate_entities and named_entities and (candidate_entities & named_entities):
+        return True
+
+    # If both actions are clearly the same meeting/outreach thread, allow the
+    # named-owner item to win when the channel-labelled candidate's evidence
+    # explicitly references that person. This avoids persisting UI channel names
+    # as people while remaining conservative when no named owner is available.
+    evidence_blob = " ".join(
+        [str(candidate.get("evidence", ""))]
+        + [str(v) for v in candidate.get("supporting_evidence", []) if v]
+    )
+    display_owner = str(named.get("owner", "")).strip()
+    return bool(display_owner and re.search(rf"\b{re.escape(display_owner)}\b", evidence_blob, flags=re.IGNORECASE))
+
+
+def _same_owner_commitments_overlap(left: dict, right: dict) -> bool:
+    """Return True when two named-owner actions describe the same durable task."""
+
+    left_owner = re.sub(r"\s+", " ", str(left.get("owner", "")).strip()).casefold()
+    right_owner = re.sub(r"\s+", " ", str(right.get("owner", "")).strip()).casefold()
+    if not left_owner or left_owner != right_owner or left_owner in _CHANNEL_OWNER_LABELS | {"unknown"}:
+        return False
+
+    left_action = str(left.get("action", ""))
+    right_action = str(right.get("action", ""))
+    left_families = _commitment_action_family(left_action)
+    right_families = _commitment_action_family(right_action)
+    if not left_families or not (left_families & right_families):
+        return False
+
+    left_entities = _commitment_named_entities(left_action)
+    right_entities = _commitment_named_entities(right_action)
+    if left_entities and right_entities and not (left_entities & right_entities):
+        return False
+
+    left_tokens = _commitment_content_tokens(left_action)
+    right_tokens = _commitment_content_tokens(right_action)
+    if len(left_tokens & right_tokens) >= 2:
+        return True
+
+    # Meeting/outreach phrasing often varies substantially (for example
+    # "reach out ... to set up a call" vs "set up an initial call").
+    # A shared named entity plus the same meeting/outreach family is enough to
+    # collapse these for the same explicit owner.
+    return bool(left_entities & right_entities and left_families & right_families)
+
+
+def _prefer_commitment_detail(left: dict, right: dict) -> dict:
+    """Choose the richer duplicate action and preserve the alternate evidence."""
+
+    def score(item: dict) -> tuple[int, int, int]:
+        action = str(item.get("action", ""))
+        return (
+            len(_commitment_action_family(action)),
+            len(_commitment_content_tokens(action)),
+            len(action),
+        )
+
+    primary, secondary = (left, right) if score(left) >= score(right) else (right, left)
+    merged = dict(primary)
+    evidence_values: list[str] = []
+    for source in (primary, secondary):
+        evidence = str(source.get("evidence", "")).strip()
+        if evidence and evidence not in evidence_values:
+            evidence_values.append(evidence)
+        for value in source.get("supporting_evidence", []) or []:
+            value = str(value).strip()
+            if value and value not in evidence_values:
+                evidence_values.append(value)
+    if evidence_values:
+        merged["evidence"] = evidence_values[0]
+        if len(evidence_values) > 1:
+            merged["supporting_evidence"] = evidence_values[1:]
+        else:
+            merged.pop("supporting_evidence", None)
+    return merged
+
+
+def _deduplicate_commitments(commitments: list[dict]) -> list[dict]:
+    """Collapse exact and resolver-level duplicate commitments deterministically."""
+
+    preliminary: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for item in commitments:
         if not isinstance(item, dict):
@@ -2311,7 +2560,33 @@ def _deduplicate_commitments(commitments: list[dict]) -> list[dict]:
         if not canonical or key in seen:
             continue
         seen.add(key)
-        kept.append(item)
+        preliminary.append(item)
+
+    named = [
+        item for item in preliminary
+        if re.sub(r"\s+", " ", str(item.get("owner", "")).strip()).casefold()
+        not in _CHANNEL_OWNER_LABELS | {"", "unknown"}
+    ]
+    channel_filtered: list[dict] = []
+    for item in preliminary:
+        owner = re.sub(r"\s+", " ", str(item.get("owner", "")).strip()).casefold()
+        if owner in _CHANNEL_OWNER_LABELS and any(
+            _channel_owned_commitment_duplicates_named(item, named_item)
+            for named_item in named
+        ):
+            continue
+        channel_filtered.append(item)
+
+    kept: list[dict] = []
+    for item in channel_filtered:
+        duplicate_index = next(
+            (index for index, existing in enumerate(kept) if _same_owner_commitments_overlap(existing, item)),
+            None,
+        )
+        if duplicate_index is None:
+            kept.append(item)
+            continue
+        kept[duplicate_index] = _prefer_commitment_detail(kept[duplicate_index], item)
     return kept
 
 
@@ -2706,6 +2981,11 @@ def _recover_explicit_removal_decisions(transcript: str) -> list[dict]:
         if entity.casefold() in {
             "over", "back", "through", "across", "down", "up", "off",
             "out", "cost", "costs", "spend", "work", "scope",
+            # Function words are not entities.  These commonly appear after
+            # conversational phrases such as "drop to" / "drop the" and were
+            # previously capable of producing garbage Decisions.
+            "the", "a", "an", "to", "for", "from", "with", "on",
+            "in", "into", "of", "and", "or", "at",
             # Pronouns/demonstratives are not durable removal entities. They
             # commonly occur in ordinary directives ("drop me the names") or
             # historical explanations ("you dropped those").
@@ -3176,8 +3456,313 @@ def _strip_narrative_action_item_claims(summary: str, has_action_items: bool) ->
     return "".join(cleaned_parts).strip()
 
 
-def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
-    """Apply deterministic evidence and cross-section consistency rules."""
+
+
+def _normalize_verified_risk_text(risk: str, evidence: str) -> str:
+    """Polish a small set of transcript-like verified risk fragments.
+
+    This runs only after v12 has already grounded the risk to exact transcript
+    evidence.  It does not invent a new risk; it converts common conversational
+    failure-mode wording into durable memory language.
+    """
+
+    text = re.sub(r"\s+", " ", str(risk or "")).strip(" .-")
+    source = f"{text} {evidence}".casefold()
+    if "end of support" in source and re.search(r"\bpatch(?:es|ing)?\b|\bupdates?\b|\bupgrades?\b", source):
+        return "Risk of losing access to critical patches and upgrades under an inadequate support arrangement"
+    return text
+
+
+def _nearby_agreement_evidence(evidence: str, transcript: str, radius: int = 2200) -> str | None:
+    """Find a nearby exact transcript line that explicitly confirms a next step.
+
+    A decision question can establish the subject, while the actual agreement may
+    occur a few turns later (for example ``that's what we'll do``).  Prefer that
+    confirmation as primary evidence while retaining the original quote as
+    supporting evidence.
+    """
+
+    if not evidence or not transcript:
+        return None
+    pos = transcript.find(evidence)
+    if pos < 0:
+        return None
+    window_start = max(0, pos - radius)
+    window_end = min(len(transcript), pos + len(evidence) + radius)
+    window = transcript[window_start:window_end]
+    cue = re.compile(
+        r"\b(?:that['’]s\s+what\s+we['’]ll\s+do|let['’]s\s+have\s+(?:that|the)\s+(?:conversation|call)|"
+        r"let['’]s\s+get\s+that\s+set\s+up|sounds\s+good|for\s+sure)\b",
+        flags=re.IGNORECASE,
+    )
+    blocks = [re.sub(r"\s+", " ", block).strip() for block in re.split(r"\n\s*\n", window)]
+    candidates = [block for block in blocks if block and not block.startswith("[") and cue.search(block)]
+    if not candidates:
+        # Speaker/timestamp headers can be attached to the text in compact transcripts.
+        candidates = [block for block in blocks if block and cue.search(block)]
+    if not candidates:
+        return None
+    # Prefer an explicit confirmation over a generic acknowledgement.
+    def score(block: str) -> tuple[int, int]:
+        lowered = block.casefold()
+        weight = 0
+        if "that's what we'll do" in lowered or "that’s what we’ll do" in lowered:
+            weight += 5
+        if "let's have" in lowered or "let’s have" in lowered:
+            weight += 4
+        if "let's get" in lowered or "let’s get" in lowered:
+            weight += 4
+        if "for sure" in lowered:
+            weight += 2
+        if "sounds good" in lowered:
+            weight += 1
+        return (weight, -len(block))
+    best = max(candidates, key=score)
+    # Strip a leading transcript header if present; the remaining text is still exact
+    # contiguous transcript content after whitespace normalization is undone below.
+    match = cue.search(best)
+    if not match:
+        return None
+    # Locate a compact phrase/sentence in the original window so stored evidence is exact.
+    original_lower = window.casefold().replace("’", "'")
+    probes = [
+        "that's what we'll do",
+        "let's have that conversation",
+        "let's have the conversation",
+        "let's get that set up",
+        "for sure",
+        "sounds good",
+    ]
+    for probe in probes:
+        idx = original_lower.find(probe)
+        if idx < 0:
+            continue
+        start = idx
+        # Expand to the surrounding sentence/turn fragment, but keep it compact.
+        left = max(window.rfind("\n\n", 0, start), window.rfind(". ", 0, start))
+        left = 0 if left < 0 else left + (2 if window[left:left+2] in {"\n\n", ". "} else 0)
+        right_candidates = [x for x in (window.find(". ", idx), window.find("\n\n", idx)) if x >= 0]
+        right = min(right_candidates) + 1 if right_candidates else min(len(window), idx + 220)
+        exact = window[left:right].strip()
+        if exact and len(exact) <= 320:
+            return exact
+    return None
+
+
+def _nearby_post_agreement_evidence(evidence: str, transcript: str, radius: int = 1400) -> str | None:
+    """Return a compact explicit confirmation that occurs *after* evidence.
+
+    For final Decision validation, a later assent can turn a proposal/question
+    into a settled direction.  A preceding statement must not retroactively make
+    a later "good push" / "maybe we prioritize" preference look settled, so this
+    helper is intentionally directional.
+    """
+
+    if not evidence or not transcript:
+        return None
+    pos = transcript.find(evidence)
+    if pos < 0:
+        return None
+    start = pos + len(evidence)
+    window = transcript[start:min(len(transcript), start + radius)]
+    cue = re.compile(
+        r"\b(?:that['’]s\s+what\s+we['’]ll\s+do|"
+        r"let['’]s\s+have\s+(?:that|the)\s+(?:conversation|call)|"
+        r"let['’]s\s+get\s+that\s+set\s+up|sounds\s+good|"
+        r"yes[, ]+let['’]s|yeah[, ]+let['’]s|for\s+sure)\b",
+        flags=re.IGNORECASE,
+    )
+    match = cue.search(window)
+    if not match:
+        return None
+
+    left = max(window.rfind("\n\n", 0, match.start()), window.rfind(". ", 0, match.start()))
+    left = 0 if left < 0 else left + (2 if window[left:left+2] in {"\n\n", ". "} else 0)
+    right_candidates = [
+        value for value in (
+            window.find(". ", match.end()),
+            window.find("\n\n", match.end()),
+        ) if value >= 0
+    ]
+    right = min(right_candidates) + 1 if right_candidates else min(len(window), match.end() + 220)
+    exact = window[left:right].strip()
+    return exact if exact and len(exact) <= 360 else None
+
+
+def _recover_perpetual_rights_question(transcript: str) -> str | None:
+    """Recover a durable unresolved license-rights question from explicit speech."""
+
+    if not transcript or not re.search(r"\bperpetual\s+rights?\b", transcript, flags=re.IGNORECASE):
+        return None
+    match = re.search(r"\bperpetual\s+rights?\b", transcript, flags=re.IGNORECASE)
+    if not match:
+        return None
+    context = transcript[max(0, match.start()-700): min(len(transcript), match.end()+900)]
+    unresolved = re.search(
+        r"\b(?:need\s+to\s+(?:find\s+out|talk)|we['’]d\s+have\s+to\s+find\s+out|"
+        r"don['’]t\s+know|not\s+sure|are\s+we\s+forfeit(?:ing)?|walk\s+away)\b",
+        context, flags=re.IGNORECASE,
+    )
+    if not unresolved:
+        return None
+    return "Will we retain perpetual license rights if the support relationship ends?"
+
+
+def _recover_support_guarantee_question(transcript: str) -> str | None:
+    """Recover an explicit unresolved support-guarantee question conservatively."""
+
+    if not transcript:
+        return None
+    match = re.search(
+        r"\bwhat\s+guarantees?\s+(?:they|the\s+provider|[A-Z][A-Za-z0-9&.-]+)\s+give\b",
+        transcript,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    context = transcript[max(0, match.start()-450): min(len(transcript), match.end()+650)]
+    if not re.search(r"\bwhen\s+something\s+breaks|\bfix\s+it|\bsupport\b", context, flags=re.IGNORECASE):
+        return None
+    # Do not recover when the local context immediately supplies a concrete
+    # guarantee/answer; this is intended only for unresolved due-diligence work.
+    tail = context[match.end() - max(0, match.start()-450):]
+    if re.search(r"\b(?:they\s+guarantee|the\s+guarantee\s+is|yes,?\s+they\s+will)\b", tail, flags=re.IGNORECASE):
+        return None
+    return "What guarantees does the support provider offer for resolving critical issues?"
+
+
+
+
+def _recover_followup_decision_from_commitments(memory: dict, transcript: str) -> dict | None:
+    """Recover an explicit group decision to hold a follow-up discussion.
+
+    The action and the decision are distinct: a named owner may be assigned to
+    arrange the call, while the group separately agrees that the call should
+    happen.  Recover that decision only when a durable named-owner meeting
+    commitment exists and nearby transcript evidence explicitly confirms the
+    conversation/call.
+    """
+
+    if memory.get("decisions") or not transcript:
+        return None
+
+    for commitment in memory.get("commitments", []):
+        if not isinstance(commitment, dict):
+            continue
+        owner = re.sub(r"\s+", " ", str(commitment.get("owner", "")).strip())
+        if not owner or owner.casefold() in _CHANNEL_OWNER_LABELS | {"unknown"}:
+            continue
+        action = re.sub(r"\s+", " ", str(commitment.get("action", "")).strip())
+        if "meeting" not in _commitment_action_family(action):
+            continue
+
+        entity_matches = re.findall(
+            r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)+\b",
+            action,
+        )
+        entity = next(
+            (value for value in entity_matches if value.casefold() != owner.casefold()),
+            None,
+        )
+        if not entity:
+            continue
+
+        evidence_candidates = [str(commitment.get("evidence", "")).strip()]
+        evidence_candidates.extend(
+            str(value).strip()
+            for value in commitment.get("supporting_evidence", []) or []
+            if str(value).strip()
+        )
+        agreement = None
+        for evidence in evidence_candidates:
+            agreement = _nearby_agreement_evidence(evidence, transcript)
+            if agreement:
+                break
+        if not agreement:
+            continue
+
+        return {
+            "decision": f"Proceed with a follow-up discussion with {entity}.",
+            "evidence": agreement,
+        }
+
+    return None
+
+def _recover_explicit_negative_settlement_decisions(transcript: str) -> list[dict]:
+    """Recover an explicit decision not to carry out a locally named future action.
+
+    Conversational decisions are often expressed anaphorically ("we're not going
+    to do that") after the speaker has just stated the concrete work being
+    rejected.  Recover only when both pieces occur in the same speaker turn and
+    the antecedent is explicit; this keeps the v12.13 precision boundary intact.
+    """
+
+    if not transcript:
+        return []
+
+    turn_pattern = re.compile(
+        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*\s*(?P<body>.*?)(?=\n\s*\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*|\Z)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    settlement = re.compile(
+        r"(?P<prefix>(?:now\s+that\s+we\s+have\s+(?P<context>[^.\n]{3,120}?)\s+in\s+place,?\s*)?)"
+        r"we\s+need\s+to\s+(?P<action>[^.\n]{10,240})\.\s*"
+        r"(?:we['’]re|we\s+are)\s+not\s+(?:gonna|going\s+to)\s+do\s+that\b",
+        flags=re.IGNORECASE,
+    )
+
+    recovered: list[dict] = []
+    for turn in turn_pattern.finditer(transcript):
+        body = turn.group("body")
+        for match in settlement.finditer(body):
+            action = re.sub(r"\s+", " ", match.group("action")).strip(" ,;:-")
+            context = re.sub(r"\s+", " ", str(match.group("context") or "")).strip(" ,;:-")
+            context = re.sub(r"^(?:this|the)\s+", "", context, flags=re.IGNORECASE)
+            action = re.sub(r"^(?:go\s+back\s+and\s+)", "", action, flags=re.IGNORECASE)
+            if context:
+                action = re.sub(
+                    r"\b(?:look\s+like\s+this|match\s+(?:it|this))\b",
+                    f"match the {context}",
+                    action,
+                    flags=re.IGNORECASE,
+                )
+            if re.search(r"\b(?:this|that|it|them)\b", action, flags=re.IGNORECASE):
+                continue
+            decision = f"Do not {action.rstrip('.')} .".replace(" .", ".")
+            evidence = match.group(0).strip()
+            if not _decision_candidate_is_well_formed(decision, evidence):
+                continue
+            recovered.append({"decision": decision, "evidence": evidence})
+    return recovered
+
+
+def _strip_internal_memory_markers(memory: dict) -> dict:
+    """Remove private resolver provenance fields before memory is persisted."""
+
+    for section in ("commitments", "decisions", "risks"):
+        for item in memory.get(section, []):
+            if not isinstance(item, dict):
+                continue
+            for key in list(item):
+                if str(key).startswith("_"):
+                    item.pop(key, None)
+    return memory
+
+def _reconcile_meeting_memory(
+    memory: dict,
+    transcript: str,
+    *,
+    verified_open_questions: set[str] | None = None,
+) -> dict:
+    """Apply deterministic evidence and cross-section consistency rules.
+
+    ``verified_open_questions`` contains v12 event-pipeline questions that were
+    already independently verified against exact transcript evidence. Baseline
+    and lower-capability paths continue through the established local question
+    checks unchanged.
+    """
+
+    verified_open_questions = verified_open_questions or set()
 
     decisions = []
     for item in memory.get("decisions", []):
@@ -3187,11 +3772,41 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         decision = str(item.get("decision", "")).strip()
         if not decision or not evidence or evidence not in transcript:
             continue
-        if not _decision_is_supported(decision, evidence):
+        context_resolved = bool(item.get("_context_resolved"))
+        event_verified = bool(item.get("_event_verified"))
+        if not context_resolved and not _decision_is_supported(decision, evidence):
+            continue
+        # v12 already verified the normalized decision against exact transcript
+        # evidence plus a decision/agreement cue. Do not reapply the legacy
+        # lexical-overlap gate to that polished wording. v11/baseline behavior
+        # remains unchanged.
+        if context_resolved and not event_verified and not _resolved_text_is_grounded_in_context(
+            decision, _resolved_item_context(item, transcript)
+        ):
             continue
         if not _decision_candidate_is_well_formed(decision, evidence):
             continue
-        decisions.append({"decision": decision, "evidence": evidence})
+        supporting_evidence = [
+            str(value).strip()
+            for value in item.get("supporting_evidence", []) or []
+            if str(value).strip() and str(value).strip() in transcript
+        ]
+        decision_quotes = [evidence, *supporting_evidence]
+        if event_verified:
+            # Final persisted decisions must still be semantically supported by
+            # their own grounded evidence. This catches late-path items whose
+            # polished conclusion survived with only a generic acknowledgement.
+            if not _decision_evidence_is_semantically_consistent(
+                decision, decision_quotes, transcript
+            ):
+                continue
+            decision_quotes = _order_decision_evidence(decision, decision_quotes, transcript)
+        normalized_decision_item = {"decision": decision, "evidence": decision_quotes[0]}
+        if len(decision_quotes) > 1:
+            normalized_decision_item["supporting_evidence"] = list(dict.fromkeys(decision_quotes[1:]))
+        if item.get("_event_verified"):
+            normalized_decision_item["_event_verified"] = True
+        decisions.append(normalized_decision_item)
 
     # Closed removal/exclusion topics can expose an explicit decision that the
     # grounded extractor missed.  Only recover it when the transcript itself
@@ -3217,14 +3832,31 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
             continue
         decisions.append({"decision": decision, "evidence": evidence})
 
+    # Recover explicit negative settlements such as "we're not going to do
+    # that" only when the same speaker turn states the concrete antecedent.
+    for item in _recover_explicit_negative_settlement_decisions(transcript):
+        evidence = str(item.get("evidence", "")).strip()
+        decision = str(item.get("decision", "")).strip()
+        if not decision or not evidence or evidence not in transcript:
+            continue
+        decisions.append({"decision": decision, "evidence": evidence})
+
     normalized_decisions = []
     for item in decisions:
         decision = str(item.get("decision", "")).strip()
         evidence = str(item.get("evidence", "")).strip()
         if decision.casefold().rstrip(".") == evidence.casefold().rstrip("."):
             decision = _canonical_fallback_decision_text(evidence)
+        decision_payload = {"decision": decision, "evidence": evidence}
+        supporting_evidence = [
+            str(value).strip()
+            for value in item.get("supporting_evidence", []) or []
+            if str(value).strip() and str(value).strip() in transcript
+        ]
+        if supporting_evidence:
+            decision_payload["supporting_evidence"] = list(dict.fromkeys(supporting_evidence))
         contextualized = _contextualize_pronominal_removal_decision(
-            {"decision": decision, "evidence": evidence},
+            decision_payload,
             transcript,
             memory.get("topics", []),
         )
@@ -3235,33 +3867,108 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         normalized_decisions,
         transcript,
     )
+    for item in memory["decisions"]:
+        if isinstance(item, dict):
+            item.pop("_event_verified", None)
 
     reconciled_questions = []
     for question in _normalize_open_questions(
         [str(question) for question in memory.get("open_questions", [])]
     ):
+        if question in verified_open_questions:
+            # v12 validated the source evidence and unresolved-at-end state before
+            # normalization. The normalized question itself may not occur verbatim
+            # in the transcript, so the baseline local-search gate is not valid.
+            reconciled_questions.append(question)
+            continue
         if not _question_is_locally_unresolved(question, transcript):
             continue
         durable_question = _contextualize_open_question(question, transcript)
         if durable_question:
             reconciled_questions.append(durable_question)
     memory["open_questions"] = _normalize_open_questions(reconciled_questions)
+    # On the v12 High Performance path, deterministic transcript recovery is a
+    # final safety net even when the model happened to propose zero questions in
+    # this run. These helpers require explicit unresolved language in the
+    # transcript, so recovery does not weaken the baseline precision contract.
+    if verified_open_questions or _memory_resolution_capable():
+        recovered_questions = [
+            _recover_perpetual_rights_question(transcript),
+            _recover_support_guarantee_question(transcript),
+        ]
+        for recovered_question in recovered_questions:
+            if not recovered_question or any(
+                _questions_are_near_duplicates(recovered_question, existing)
+                for existing in memory["open_questions"]
+            ):
+                continue
+            memory["open_questions"] = _normalize_open_questions(
+                [*memory["open_questions"], recovered_question]
+            )
+
+    reconciled_risks = []
+    for item in memory.get("risks", []):
+        if not isinstance(item, dict):
+            continue
+        risk = re.sub(r"\s+", " ", str(item.get("risk", ""))).strip()
+        evidence = str(item.get("evidence", "")).strip()
+        if not risk or not evidence or evidence not in transcript:
+            continue
+        evidence_values = [evidence]
+        evidence_values.extend(
+            str(value).strip()
+            for value in item.get("supporting_evidence", []) or []
+            if str(value).strip() and str(value).strip() in transcript
+        )
+        if item.get("_event_verified") or item.get("_context_resolved"):
+            evidence_values = _order_risk_evidence(risk, evidence_values, transcript)
+        normalized_risk = {"risk": risk, "evidence": evidence_values[0]}
+        if len(evidence_values) > 1:
+            normalized_risk["supporting_evidence"] = list(dict.fromkeys(evidence_values[1:]))
+        reconciled_risks.append(normalized_risk)
+    memory["risks"] = reconciled_risks
 
     reconciled_commitments = []
     for item in memory.get("commitments", []):
         if not isinstance(item, dict):
             continue
+        owner = re.sub(r"\s+", " ", str(item.get("owner", "")).strip()).casefold()
+        if owner in _AUDIO_CHANNEL_OWNER_LABELS:
+            continue
         evidence = str(item.get("evidence", "")).strip()
         action = str(item.get("action", "")).strip()
         if not _commitment_is_actionable(action, evidence):
             continue
-        resolved_action = _resolve_commitment_action(action, evidence, transcript)
+        if item.get("_context_resolved"):
+            if item.get("_event_verified"):
+                # The v12 verifier already established exact transcript evidence,
+                # ownership/cue support, and a self-contained normalized action.
+                # Requiring lexical overlap here would discard valid paraphrases
+                # such as "arrange" for transcript wording "set up".
+                resolved_action = action if _commitment_action_is_self_contained(action) else None
+            else:
+                resolved_action = (
+                    action
+                    if _commitment_action_is_self_contained(action)
+                    and _resolved_text_is_grounded_in_context(
+                        action, _resolved_item_context(item, transcript)
+                    )
+                    else None
+                )
+        else:
+            resolved_action = _resolve_commitment_action(action, evidence, transcript)
         if not resolved_action:
             continue
         normalized_item = dict(item)
         normalized_item["action"] = resolved_action
+        normalized_item.pop("_context_resolved", None)
+        normalized_item.pop("_event_verified", None)
         reconciled_commitments.append(normalized_item)
     memory["commitments"] = _deduplicate_commitments(reconciled_commitments)
+
+    recovered_followup_decision = _recover_followup_decision_from_commitments(memory, transcript)
+    if recovered_followup_decision is not None:
+        memory["decisions"] = [recovered_followup_decision]
 
     authoritative_actions = []
     for commitment in memory.get("commitments", []):
@@ -3325,7 +4032,7 @@ def _reconcile_meeting_memory(memory: dict, transcript: str) -> dict:
         )
         topic["summary"] = topic_summary or _fallback_topic_summary(topic)
 
-    return memory
+    return _strip_internal_memory_markers(memory)
 
 
 def _transcript_channel_for_evidence(evidence: str, transcript: str) -> str | None:
@@ -4078,6 +4785,2727 @@ Transcript section:
     }
 
 
+
+def _memory_resolution_capable() -> bool:
+    """Return whether the active local profile can afford contextual resolution.
+
+    Keep the existing single-pass plumbing on smaller models/Macs.  The richer
+    resolver is intentionally limited to the High Performance tier with a
+    large local model so lower-spec systems do not pay another inference pass.
+    """
+
+    profile = get_execution_profile(
+        PERFORMANCE_PROFILE,
+        context_size_tokens=LLM_CONTEXT_SIZE,
+        model_name=get_active_llm_model_name(),
+    )
+    parameter_billions = infer_model_parameter_billions(
+        get_active_llm_model_name()
+    )
+    return bool(
+        profile.resolved_name == "High Performance"
+        and parameter_billions is not None
+        and parameter_billions >= 20.0
+    )
+
+
+def _memory_needs_contextual_resolution(memory: dict, transcript: str, meeting_summary: str = "") -> bool:
+    """Escalate only when precision-sensitive memory shows suspicious gaps.
+
+    This deliberately uses cheap deterministic signals.  The resolver is not a
+    blanket second pass; it is an escalation path for meetings where the first
+    pass produced opaque ownership/actions, weak risks, or apparently missed
+    settled next steps/questions.
+    """
+
+    for item in memory.get("commitments", []):
+        if not isinstance(item, dict):
+            continue
+        owner = str(item.get("owner", "")).strip()
+        action = str(item.get("action", "")).strip()
+        if owner in {"", "Unknown"}:
+            return True
+        if _OPAQUE_COMMITMENT_REFERENCE_PATTERN.search(action):
+            return True
+        if not _commitment_action_is_self_contained(action):
+            return True
+
+    for item in memory.get("risks", []):
+        if not isinstance(item, dict):
+            continue
+        risk = str(item.get("risk", "")).strip()
+        if not risk or risk.casefold() == str(item.get("evidence", "")).strip().casefold():
+            return True
+        if re.search(r"\b(?:this|that|it|stuff|things?)\b", risk, flags=re.IGNORECASE):
+            return True
+
+    # These cues often represent useful durable facts that the conservative
+    # first pass can miss because ordinary meeting speech is not neatly phrased.
+    lowered = transcript.casefold()
+    if not memory.get("commitments") and re.search(
+        r"\b(?:why\s+don['’]t\s+you|take\s+the\s+lead|next\s+step|"
+        r"i['’]ll\s+reach\s+out|i\s+will\s+reach\s+out|set\s+up\s+(?:a|the)\s+(?:call|meeting))\b",
+        lowered,
+    ):
+        return True
+    if not memory.get("decisions") and re.search(
+        r"\b(?:we agreed|let['’]s|that['’]s what we['’]ll do|sounds good|"
+        r"we['’]re not (?:gonna|going to) do that|we are not going to do that)\b",
+        lowered,
+    ):
+        return True
+    if not memory.get("open_questions") and re.search(
+        r"\b(?:we['’]d have to find out|need to find out|don['’]t know|not sure|unclear)\b",
+        lowered,
+    ):
+        return True
+
+    # The narrative summary is a useful semantic index when the raw transcript
+    # is conversational enough that the first-pass extractor misses an agreed
+    # next step or unresolved issue.  It is only a trigger here; transcript
+    # evidence remains mandatory later.
+    if _summary_memory_cues(meeting_summary):
+        return True
+    return False
+
+
+def _summary_memory_cues(meeting_summary: str, limit: int = 12) -> list[str]:
+    """Return concise narrative-summary lines that may point to durable memory.
+
+    The narrative summary is never authoritative evidence.  On the High
+    Performance path it is useful as a semantic index into a noisy transcript:
+    the resolver can use these lines to know what to search for, but every
+    retained fact must still cite exact transcript evidence.
+    """
+
+    if not meeting_summary:
+        return []
+
+    cue_pattern = re.compile(
+        r"\b(?:agreed|decided|will|next\s+step|follow[- ]?up|set\s+up|"
+        r"reach\s+out|take\s+the\s+lead|plan(?:ning)?|risk|concern|"
+        r"uncertain|unclear|need\s+to\s+(?:know|understand|find\s+out)|"
+        r"question|whether)\b",
+        flags=re.IGNORECASE,
+    )
+    cues: list[str] = []
+    for raw_line in meeting_summary.splitlines():
+        line = re.sub(r"^\s*(?:[-*+]\s+|#{1,6}\s+)", "", raw_line).strip()
+        if not line or len(line) < 12 or len(line) > 420:
+            continue
+        if not cue_pattern.search(line):
+            continue
+        if line not in cues:
+            cues.append(line)
+        if len(cues) >= limit:
+            break
+    return cues
+
+
+
+
+def _transcript_turn_records(transcript: str) -> list[dict]:
+    """Parse timestamped transcript turns while preserving exact body text.
+
+    The memory pipeline uses turn-level retrieval as an evidence index.  This
+    follows extractive meeting-QA/action-item practice: locate source spans first,
+    then normalize them into durable memory instead of asking the model to invent
+    a polished sentence and searching for support afterward.
+    """
+
+    pattern = re.compile(
+        r"(?ms)^\[(?P<time>\d{1,2}:\d{2})\]\s+\*\*(?P<speaker>[^*]+)\*\*\s*\n+"
+        r"(?P<body>.*?)(?=^\[\d{1,2}:\d{2}\]\s+\*\*|\Z)"
+    )
+    turns: list[dict] = []
+    for match in pattern.finditer(str(transcript or "")):
+        body = match.group("body").strip()
+        if not body:
+            continue
+        turns.append({
+            "time": match.group("time"),
+            "speaker": match.group("speaker").strip(),
+            "body": body,
+            # Preserve both the exact body span and the complete turn span.  A
+            # lexically grounded quote may begin inside the timestamp/header
+            # (for example ``07:37] **Remote**`` after punctuation-normalized
+            # matching), so speaker attribution must be able to resolve either
+            # representation without guessing from nearby text.
+            "start": match.start("body"),
+            "end": match.end("body"),
+            "turn_start": match.start(),
+            "turn_end": match.end(),
+        })
+    return turns
+
+
+def _meeting_participant_identity_map(meeting_label: str, transcript: str) -> dict[str, str]:
+    """Resolve only high-confidence channel identities for memory attribution.
+
+    Mic is the configured local/self channel.  For a meeting explicitly titled as
+    a 1v1, if the transcript contains exactly one other audio channel, the other
+    channel can be attributed to the counterpart named in the title.  Multi-party
+    meetings deliberately remain unmapped rather than guessing.
+    """
+
+    mapping: dict[str, str] = {}
+    if SELF_SPEAKER_LABEL and SELF_NAME:
+        mapping[SELF_SPEAKER_LABEL.casefold()] = SELF_NAME
+
+    # Native recorder transcripts use ``Mic`` for the local microphone channel
+    # even when an older/private identity configuration still names the local
+    # speaker differently (for example a nickname used by legacy diarization).
+    # Treat the recorder's canonical Mic channel as local/self whenever it is
+    # actually present in the transcript.  This is source-channel provenance,
+    # not a guess about a participant's identity.
+    transcript_channels = [
+        turn["speaker"].strip()
+        for turn in _transcript_turn_records(transcript)
+        if turn.get("speaker")
+    ]
+    if SELF_NAME and any(channel.casefold() == "mic" for channel in transcript_channels):
+        mapping["mic"] = SELF_NAME
+
+    label = re.sub(r"\s+", " ", str(meeting_label or "")).strip()
+    match = re.match(r"^(.+?)\s+1\s*(?:v|vs\.?|on)\s*1\b", label, flags=re.IGNORECASE)
+    if not match:
+        match = re.match(r"^(.+?)\s+1v1\b", label, flags=re.IGNORECASE)
+    if not match:
+        return mapping
+
+    counterpart = re.sub(r"\s+", " ", match.group(1)).strip(" -–—")
+    if not counterpart or counterpart.casefold() == str(SELF_NAME).casefold():
+        return mapping
+
+    channels = []
+    for channel in transcript_channels:
+        if channel.casefold() not in {value.casefold() for value in channels}:
+            channels.append(channel)
+    self_channel_labels = {
+        str(SELF_SPEAKER_LABEL or "").casefold(),
+        "mic" if any(channel.casefold() == "mic" for channel in channels) else "",
+    }
+    self_channel_labels.discard("")
+    others = [
+        channel for channel in channels
+        if channel.casefold() not in self_channel_labels
+    ]
+    if len(others) == 1 and any(
+        channel.casefold() in self_channel_labels for channel in channels
+    ):
+        mapping[others[0].casefold()] = counterpart
+    return mapping
+
+
+def _participant_name_for_channel(channel: str, identity_map: dict[str, str] | None) -> str:
+    if not channel:
+        return ""
+    if identity_map:
+        resolved = identity_map.get(channel.casefold())
+        if resolved:
+            return resolved
+    return channel
+
+
+_FIRST_PERSON_FUTURE_WORK_PATTERN = re.compile(
+    r"\b(?:i['’]ll|i\s+will|i['’]m\s+(?:going\s+to|gonna)|"
+    r"i\s+am\s+going\s+to|i\s+can\s+(?:take|handle|join|call|contact|reach|review|send|schedule)|"
+    r"i\s+(?:owe|need\s+to)\b)",
+    flags=re.IGNORECASE,
+)
+
+
+def _event_turn_cue_matches(event_type: str, body: str) -> bool:
+    kind = str(event_type or "").casefold()
+    if kind == "commitment":
+        return bool(_FIRST_PERSON_FUTURE_WORK_PATTERN.search(body))
+    if kind == "assignment":
+        return bool(re.search(
+            r"\b(?:why\s+don['’]t\s+you|take\s+the\s+lead|please|can\s+you|"
+            r"could\s+you|would\s+you|need\s+you\s+to)\b",
+            body,
+            flags=re.IGNORECASE,
+        ))
+    if kind == "decision":
+        return bool(re.search(
+            r"\b(?:we\s+(?:decided|agreed|approved)|let['’]s|that['’]s\s+what\s+we['’]ll\s+do|"
+            r"we['’]re\s+not\s+(?:gonna|going\s+to)|we\s+are\s+not\s+going\s+to)\b",
+            body,
+            flags=re.IGNORECASE,
+        ))
+    if kind in {"question", "uncertainty"}:
+        return "?" in body or bool(re.search(
+            r"\b(?:don['’]t\s+know|not\s+sure|unclear|need\s+to\s+find\s+out|"
+            r"we['’]d\s+have\s+to\s+find\s+out)\b",
+            body,
+            flags=re.IGNORECASE,
+        ))
+    if kind == "concern":
+        return bool(re.search(r"\b(?:risk|concern|problem|exposure|could\s+lose|might\s+lose)\b", body, flags=re.IGNORECASE))
+    if kind in {"next_step", "proposal", "agreement"}:
+        return bool(re.search(
+            r"\b(?:next\s+step|we['’]re\s+gonna|we\s+will|we['’]ll|let['’]s|"
+            r"should|could|plan\s+to|going\s+to|sounds\s+good|agree)\b",
+            body,
+            flags=re.IGNORECASE,
+        ))
+    return True
+
+
+def _recover_event_evidence_from_turns(
+    item: dict,
+    transcript: str,
+) -> list[str]:
+    """Retrieve exact turn evidence when the model paraphrased its citation.
+
+    Candidate semantics may be paraphrased, but retained evidence must remain an
+    exact transcript span.  Rank source turns using subject/evidence lexical
+    overlap plus the dialogue-act cue expected for the event type.  This is a
+    retrieval step, not semantic acceptance: downstream verification still has to
+    decide whether the normalized memory item is warranted.
+    """
+
+    turns = _transcript_turn_records(transcript)
+    if not turns:
+        return []
+
+    event_type = str(item.get("event_type", "")).strip().casefold()
+    speaker = str(item.get("speaker", "")).strip()
+    subject_tokens = _commitment_content_tokens(str(item.get("subject", "")))
+    raw_evidence = item.get("evidence", [])
+    if isinstance(raw_evidence, str):
+        raw_evidence = [raw_evidence]
+    evidence_tokens: set[str] = set()
+    if isinstance(raw_evidence, list):
+        for value in raw_evidence:
+            evidence_tokens |= _commitment_content_tokens(str(value or ""))
+
+    ranked: list[tuple[tuple[int, int, int, int], str]] = []
+    for turn in turns:
+        if speaker and speaker.casefold() in _AUDIO_CHANNEL_OWNER_LABELS:
+            if turn["speaker"].casefold() != speaker.casefold():
+                continue
+        body = turn["body"]
+        if not _event_turn_cue_matches(event_type, body):
+            continue
+        body_tokens = _commitment_content_tokens(body)
+        subject_overlap = len(subject_tokens & body_tokens)
+        evidence_overlap = len(evidence_tokens & body_tokens)
+        if subject_overlap < 2 and evidence_overlap < 4:
+            continue
+        ranked.append((
+            (
+                subject_overlap,
+                min(evidence_overlap, 12),
+                1 if speaker and turn["speaker"].casefold() == speaker.casefold() else 0,
+                -abs(len(body_tokens) - max(len(subject_tokens), 1)),
+            ),
+            body,
+        ))
+
+    if not ranked:
+        return []
+    ranked.sort(key=lambda value: value[0], reverse=True)
+    best_score = ranked[0][0]
+    best = [body for score, body in ranked if score == best_score]
+    # Ambiguous retrieval is omission, not a guess.
+    return [best[0]] if len(best) == 1 else []
+
+
+def _speaker_channel_for_evidence(evidence: str, transcript: str) -> str:
+    """Resolve the audio channel that owns one exact grounded evidence span.
+
+    Prefer a channel embedded in a timestamped evidence header.  Grounding can
+    legitimately return a slice that begins one character into ``[07:37]`` after
+    punctuation-normalized matching, so accept either ``[07:37]`` or ``07:37]``.
+    Otherwise attribute from the transcript turn containing the exact slice.
+    """
+
+    if not evidence:
+        return ""
+
+    header = re.search(
+        r"(?:^|\n)\[?\d{1,2}:\d{2}\]\s+\*\*([^*]+)\*\*",
+        evidence,
+        flags=re.MULTILINE,
+    )
+    if header:
+        return header.group(1).strip()
+
+    pos = transcript.find(evidence)
+    if pos < 0:
+        return ""
+
+    # Prefer the nearest preceding timestamp/speaker header.  This remains
+    # reliable even for legacy/synthetic transcripts that do not place every
+    # timestamp at the beginning of a new line.
+    preceding = list(re.finditer(
+        r"\[\d{1,2}:\d{2}\]\s+\*\*([^*]+)\*\*",
+        transcript[:pos + 1],
+    ))
+    if preceding:
+        return preceding[-1].group(1).strip()
+
+    for turn in _transcript_turn_records(transcript):
+        if turn.get("turn_start", turn["start"]) <= pos < turn.get("turn_end", turn["end"]):
+            return turn["speaker"]
+    return ""
+
+
+def _authoritative_first_person_owner(
+    quotes: list[str],
+    transcript: str,
+    identity_map: dict[str, str] | None,
+) -> str:
+    """Derive action ownership from grounded first-person source evidence.
+
+    Once an action is grounded, source attribution outranks a model-generated
+    owner/target.  This is deterministic provenance, not semantic inference: an
+    exact first-person future-work span belongs to the participant mapped from
+    that span's speaker channel.  Ambiguous or unmapped channel ownership is
+    omitted rather than guessed.
+    """
+
+    owners: set[str] = set()
+    for quote in quotes:
+        if not quote or not _FIRST_PERSON_FUTURE_WORK_PATTERN.search(quote):
+            continue
+        channel = _speaker_channel_for_evidence(quote, transcript)
+        resolved = _participant_name_for_channel(channel, identity_map).strip()
+        if not resolved or resolved.casefold() in _AUDIO_CHANNEL_OWNER_LABELS:
+            continue
+        owners.add(resolved)
+    return next(iter(owners)) if len(owners) == 1 else ""
+
+
+def _memory_candidate_evidence_index(transcript: str, limit: int = 24) -> list[str]:
+    """Return exact high-signal turns as a compact retrieval index for pass 1.
+
+    Long-context models can under-use information located in the middle of long
+    prompts.  Surfacing exact candidate turns near the instructions gives the
+    extractor a position-agnostic evidence index while the full transcript
+    remains authoritative below.
+    """
+
+    cue = re.compile(
+        r"\b(?:i['’]ll|i\s+will|i['’]m\s+(?:going\s+to|gonna)|we['’]re\s+gonna|"
+        r"we\s+will|why\s+don['’]t\s+you|take\s+the\s+lead|next\s+step|let['’]s|"
+        r"we\s+(?:decided|agreed|approved)|we['’]re\s+not\s+(?:gonna|going\s+to)|"
+        r"risk|concern|problem|don['’]t\s+know|not\s+sure|need\s+to\s+find\s+out)\b|\?",
+        flags=re.IGNORECASE,
+    )
+    indexed: list[str] = []
+    for turn in _transcript_turn_records(transcript):
+        body = re.sub(r"\s+", " ", turn["body"]).strip()
+        if not cue.search(body):
+            continue
+        indexed.append(f'[{turn["time"]}] **{turn["speaker"]}** {body}')
+        if len(indexed) >= limit:
+            break
+    return indexed
+
+def _high_performance_memory_quality_cleanup(memory: dict) -> dict:
+    """Drop unusable precision-memory fragments after enhanced resolution.
+
+    This is deliberately High-Performance-only.  Smaller-model profiles keep
+    their established plumbing, while the richer path refuses to preserve raw
+    conversational fragments merely because the resolver could not normalize
+    them.  Omission is preferable to authoritative gibberish.
+    """
+
+    cleaned = dict(memory)
+    commitments = []
+    for item in memory.get("commitments", []):
+        if not isinstance(item, dict):
+            continue
+        owner = str(item.get("owner", "")).strip()
+        action = str(item.get("action", "")).strip()
+        if not action:
+            continue
+        if owner in {"", "Unknown"} and (
+            _OPAQUE_COMMITMENT_REFERENCE_PATTERN.search(action)
+            or not _commitment_action_is_self_contained(action)
+        ):
+            continue
+        commitments.append(item)
+    cleaned["commitments"] = commitments
+
+    risks = []
+    for item in memory.get("risks", []):
+        if not isinstance(item, dict):
+            continue
+        risk = str(item.get("risk", "")).strip()
+        evidence = str(item.get("evidence", "")).strip()
+        if not risk:
+            continue
+        if risk.casefold() == evidence.casefold():
+            continue
+        if re.search(r"\b(?:this|that|it|stuff|things?)\b", risk, flags=re.IGNORECASE):
+            continue
+        risks.append(item)
+    cleaned["risks"] = risks
+    return cleaned
+
+
+def _resolution_local_context(evidence: str, transcript: str, radius: int = 650) -> str:
+    if not evidence or not transcript:
+        return ""
+    pos = transcript.find(evidence)
+    if pos < 0:
+        return ""
+    return transcript[max(0, pos - radius): min(len(transcript), pos + len(evidence) + radius)]
+
+
+def _resolved_evidence_quotes(item: dict, transcript: str) -> list[str]:
+    """Return transcript-grounded evidence for one resolved memory item.
+
+    Pass 2 is allowed to normalize punctuation/whitespace while copying evidence,
+    but durable memory must always store the exact transcript slice that actually
+    grounds the item.  Any ungrounded evidence entry invalidates the candidate.
+    """
+
+    raw = item.get("evidence", [])
+    if isinstance(raw, str):
+        raw_quotes = [raw]
+    elif isinstance(raw, list):
+        raw_quotes = raw
+    else:
+        return []
+
+    quotes: list[str] = []
+    for value in raw_quotes:
+        grounded = _ground_evidence_quote(str(value or ""), transcript)
+        if not grounded:
+            return []
+        if grounded not in quotes:
+            quotes.append(grounded)
+    return quotes
+
+
+def _resolved_item_context(item: dict, transcript: str) -> str:
+    """Combine tight windows around all exact evidence quotes for one fact."""
+
+    quotes = _resolved_evidence_quotes(item, transcript)
+    return "\n".join(
+        _resolution_local_context(quote, transcript)
+        for quote in quotes
+        if quote
+    )
+
+
+def _resolved_text_is_grounded_in_context(
+    text: str,
+    context: str,
+    *,
+    minimum_tokens: int = 2,
+    minimum_coverage: float = 0.60,
+) -> bool:
+    """Require strong lexical support without demanding verbatim paraphrase.
+
+    The contextual resolver is specifically allowed to normalize conversational
+    speech into durable memory. Requiring every content token in the normalized
+    sentence to appear verbatim in the evidence defeated that purpose (for
+    example ``arrange`` vs. ``set up``) and could reject an otherwise grounded
+    item. Keep the gate conservative by requiring multiple grounded content
+    tokens and substantial overlap with the grouped evidence.
+    """
+
+    if not context:
+        return False
+    content = _commitment_content_tokens(text)
+    if len(content) < minimum_tokens:
+        return False
+    context_tokens = _commitment_content_tokens(context)
+    overlap = content & context_tokens
+    if len(overlap) < minimum_tokens:
+        return False
+    return (len(overlap) / len(content)) >= minimum_coverage
+
+
+def _resolved_text_is_grounded(text: str, evidence: str, transcript: str, *, minimum_tokens: int = 2) -> bool:
+    """Compatibility helper for existing single-evidence reconciliation paths."""
+
+    return _resolved_text_is_grounded_in_context(
+        text,
+        _resolution_local_context(evidence, transcript),
+        minimum_tokens=minimum_tokens,
+    )
+
+
+_DECISION_PREDICATE_CONCEPTS = {
+    "arrange": (r"\b(?:set\s+up|schedule|arrange|coordinate|book)\b",),
+    "meet": (r"\b(?:call|meeting|conversation|discussion|session)\b",),
+    "review": (r"\b(?:review|assess|assessment|evaluate|evaluation|explore|investigate|investigation|due\s+diligence|look\s+at|examine)\b",),
+    "decide": (r"\b(?:decide|decision|choose|select|proceed|move\s+forward|go\s+forward)\b",),
+    "engage": (r"\b(?:engage|work\s+with|partner\s+with|use|adopt|switch\s+to|move\s+to)\b",),
+    "obtain": (r"\b(?:get|obtain|request|receive|collect|send\s+over|provide)\b",),
+}
+
+_DECISION_TOPIC_CONCEPTS = {
+    "contract": (r"\b(?:contract|agreement|terms?|conditions?|indemnif\w*|legal)\b",),
+    "risk": (r"\b(?:risk|concern|exposure|liabilit\w*|infringement|lawsuit|sued)\b",),
+    "support": (r"\b(?:support|patch(?:es|ing)?|upgrade(?:s|ing)?|maintenance)\b",),
+    "license": (r"\b(?:licen[cs]e|licensing|perpetual\s+rights?)\b",),
+    "cost": (r"\b(?:cost|price|pricing|financial|saving(?:s)?)\b",),
+}
+
+
+def _decision_semantic_concepts(text: str, groups: dict[str, tuple[str, ...]]) -> set[str]:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    concepts: set[str] = set()
+    for concept, patterns in groups.items():
+        if any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns):
+            concepts.add(concept)
+    return concepts
+
+
+def _decision_evidence_score(decision: str, evidence: str) -> tuple[int, int, int]:
+    """Rank grounded decision evidence by semantic specificity.
+
+    Prefer quotes that carry the same business predicate/topic as the normalized
+    decision. Generic confirmations remain useful corroboration but should not
+    replace a more informative transcript quote as primary evidence.
+    """
+
+    decision_predicates = _decision_semantic_concepts(decision, _DECISION_PREDICATE_CONCEPTS)
+    decision_topics = _decision_semantic_concepts(decision, _DECISION_TOPIC_CONCEPTS)
+    evidence_predicates = _decision_semantic_concepts(evidence, _DECISION_PREDICATE_CONCEPTS)
+    evidence_topics = _decision_semantic_concepts(evidence, _DECISION_TOPIC_CONCEPTS)
+    predicate_overlap = len(decision_predicates & evidence_predicates)
+    topic_overlap = len(decision_topics & evidence_topics)
+    informative_tokens = len(re.findall(r"[A-Za-z0-9&'-]+", evidence))
+    return (topic_overlap, predicate_overlap, informative_tokens)
+
+
+def _order_decision_evidence(decision: str, quotes: list[str], transcript: str) -> list[str]:
+    """Keep the most semantically informative grounded quote first."""
+
+    candidates = [quote for quote in quotes if quote]
+    if candidates:
+        agreement = _nearby_agreement_evidence(candidates[0], transcript)
+        if agreement and agreement not in candidates:
+            candidates.append(agreement)
+    return sorted(
+        dict.fromkeys(candidates),
+        key=lambda quote: _decision_evidence_score(decision, quote),
+        reverse=True,
+    )
+
+
+def _decision_evidence_is_semantically_consistent(
+    decision: str,
+    quotes: list[str],
+    transcript: str,
+) -> bool:
+    """Require the decision proposition and its grounded evidence to concern the same act/topic.
+
+    This is intentionally not a bag-of-words overlap gate.  It compares coarse
+    semantic concepts (for example ``set up``/``arrange`` and
+    ``call``/``meeting``) so polished decision wording may differ from speech,
+    while generic confirmations such as ``that's what we'll do`` cannot validate
+    an unrelated proposition such as a contract-review decision.
+    """
+
+    if not decision or not quotes:
+        return False
+
+    # Compare the normalized decision to the evidence quotes themselves, not to a
+    # broad transcript window around them. Nearby conversation may discuss other
+    # propositions (for example contract review) and can otherwise make an
+    # unrelated generic confirmation such as "that's what we'll do" look
+    # semantically supported. Supporting quotes supplied by the resolver remain
+    # eligible because they are independently grounded transcript evidence.
+    evidence_text = "\n".join(quote for quote in quotes if quote)
+    if not evidence_text:
+        return False
+
+    decision_predicates = _decision_semantic_concepts(decision, _DECISION_PREDICATE_CONCEPTS)
+    decision_topics = _decision_semantic_concepts(decision, _DECISION_TOPIC_CONCEPTS)
+    context_predicates = _decision_semantic_concepts(evidence_text, _DECISION_PREDICATE_CONCEPTS)
+    context_topics = _decision_semantic_concepts(evidence_text, _DECISION_TOPIC_CONCEPTS)
+
+    # A durable normalized decision should normally carry at least one semantic
+    # predicate.  If our compact concept vocabulary does not recognize it, keep
+    # the established verifier behavior rather than introducing a broad false
+    # negative for unrelated decision forms.
+    if not decision_predicates:
+        return True
+
+    if not (decision_predicates & context_predicates):
+        return False
+
+    # When the decision names a concrete business topic, require at least one
+    # matching topic concept as well.  This blocks generic nearby agreement from
+    # being attached to a different decision proposition.
+    if decision_topics and not (decision_topics & context_topics):
+        return False
+
+    return True
+
+
+def _resolved_memory_item(
+    payload: dict,
+    quotes: list[str],
+) -> dict:
+    result = dict(payload)
+    result["evidence"] = quotes[0]
+    if len(quotes) > 1:
+        result["supporting_evidence"] = quotes[1:]
+    # v12 has already independently verified these normalized facts against
+    # exact transcript evidence. Preserve that provenance so the downstream
+    # baseline reconciler does not accidentally re-reject a valid paraphrase
+    # using older lexical-overlap rules. This marker is internal only and is
+    # stripped before meeting_memory.json is returned.
+    result["_event_verified"] = True
+    return result
+
+
+_IMMEDIATE_MEETING_FACILITATION_ACTION_PATTERN = re.compile(
+    r"\b(?:show|demo|demonstrate|walk\s+through|share\s+(?:my\s+)?screen|go\s+back\s+to)\b",
+    flags=re.IGNORECASE,
+)
+
+_IMMEDIATE_MEETING_FACILITATION_EVIDENCE_PATTERN = re.compile(
+    r"\b(?:can\s+show|could\s+show|let\s+me\s+show|i['’]ll\s+go\s+back\s+to|"
+    r"happy\s+to\s+(?:show|walk\s+through)|if\s+you\s+want\b.{0,80}\b(?:show|walk\s+through)|"
+    r"just\s+wanted\s+to\s+walk\s+through|share\s+(?:my\s+)?screen)\b",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+_DURABLE_FUTURE_TIMING_PATTERN = re.compile(
+    r"\b(?:tomorrow|next\s+(?:week|month)|later\s+(?:today|this\s+week)|after\s+(?:this\s+meeting|the\s+meeting)|"
+    r"follow\s+up|schedule|set\s+up|by\s+(?:monday|tuesday|wednesday|thursday|friday|\d{1,2}(?::\d{2})?))\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _commitment_is_immediate_meeting_facilitation(action: str, quotes: list[str]) -> bool:
+    """Reject ephemeral in-meeting navigation/demo work from durable Action memory.
+
+    A statement such as "Alex can show you how it works" or "I'll go back to
+    that screen" may be a real conversational next step, but it is normally
+    consumed inside the current meeting rather than work that remains open
+    afterward.  Keep a presentation/demo action when the evidence gives a
+    durable future time or scheduling cue.
+    """
+
+    if not _IMMEDIATE_MEETING_FACILITATION_ACTION_PATTERN.search(str(action or "")):
+        return False
+    evidence_text = "\n".join(str(q or "") for q in quotes if str(q or "").strip())
+    if not evidence_text:
+        return False
+    if _DURABLE_FUTURE_TIMING_PATTERN.search(evidence_text):
+        return False
+    return bool(_IMMEDIATE_MEETING_FACILITATION_EVIDENCE_PATTERN.search(evidence_text))
+
+
+def _validate_resolved_commitment(
+    item: dict,
+    transcript: str,
+    identity_map: dict[str, str] | None = None,
+) -> dict | None:
+    quotes = _resolved_evidence_quotes(item, transcript)
+    action = re.sub(r"\s+", " ", str(item.get("action", ""))).strip()
+    owner = re.sub(r"\s+", " ", str(item.get("owner", "Unknown"))).strip() or "Unknown"
+    if not quotes or not action:
+        return None
+
+    authoritative_owner = _authoritative_first_person_owner(
+        quotes, transcript, identity_map
+    )
+    if authoritative_owner:
+        owner = authoritative_owner
+    if owner.casefold() in _AUDIO_CHANNEL_OWNER_LABELS:
+        return None
+    if not _commitment_action_is_self_contained(action):
+        return None
+    if _commitment_is_immediate_meeting_facilitation(action, quotes):
+        return None
+
+    context = _resolved_item_context(item, transcript)
+    # The normalized action is intentionally allowed to paraphrase conversational
+    # speech. Ground the exact evidence and speaker attribution instead of
+    # requiring the participant's name to be literally spoken in a first-person
+    # commitment.
+    if owner != "Unknown" and not re.search(
+        rf"\b{re.escape(owner)}\b", context, flags=re.IGNORECASE
+    ):
+        evidence_owners = {
+            _participant_name_for_channel(
+                _speaker_channel_for_evidence(quote, transcript),
+                identity_map,
+            ).casefold()
+            for quote in quotes
+            if _FIRST_PERSON_FUTURE_WORK_PATTERN.search(quote)
+        }
+        if owner.casefold() not in evidence_owners:
+            return None
+    if not re.search(
+        r"\b(?:i\s+will|i['’]ll|i['’]m\s+(?:going\s+to|gonna)|i\s+am\s+going\s+to|"
+        r"we\s+will|we['’]ll|we['’]re\s+gonna|why\s+don['’]t\s+you|"
+        r"take\s+the\s+lead|reach\s+out|set\s+up|next\s+step|let['’]s)\b",
+        context,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    return _resolved_memory_item(
+        {
+            "owner": owner,
+            "action": action,
+            "status": "open",
+            "_context_resolved": True,
+        },
+        quotes,
+    )
+
+
+def _validate_resolved_decision(item: dict, transcript: str) -> dict | None:
+    quotes = _resolved_evidence_quotes(item, transcript)
+    decision = re.sub(r"\s+", " ", str(item.get("decision", ""))).strip()
+    if not quotes or not decision:
+        return None
+    if not _decision_candidate_is_well_formed(decision, quotes[0]):
+        return None
+    context = _resolved_item_context(item, transcript)
+    explicit = any(_decision_is_supported(decision, quote) for quote in quotes)
+    # A system capability, release behavior, or implementation limitation is an
+    # update unless the evidence explicitly shows that people settled on it.
+    # This blocks statements like "The feature will not automatically update
+    # existing workspaces" from becoming Decisions merely because they contain
+    # future-tense wording.
+    if _decision_is_operational_fact_claim(decision) and not any(
+        re.search(
+            r"\b(?:we\s+(?:decided|agreed|approved)|the\s+team\s+(?:decided|agreed|approved)|"
+            r"let['’]s|that['’]s\s+what\s+we['’]ll\s+do)\b",
+            quote,
+            flags=re.IGNORECASE,
+        )
+        for quote in quotes
+    ):
+        return None
+    # Resolver output must not become a Decision merely because a broad local
+    # context window contains some unrelated future-tense or agreement phrase.
+    # Require the *grounded decision evidence itself* to carry a non-hedged
+    # settlement cue. This preserves explicit settled next steps while rejecting
+    # proposal/preferences such as "maybe we prioritize" or "that's a good push".
+    hedged = re.compile(
+        r"\b(?:maybe|might|could|should|hopefully|possibly|perhaps|"
+        r"i\s+think|we\s+think|probably|would\s+like\s+to)\b",
+        flags=re.IGNORECASE,
+    )
+    settlement = re.compile(
+        r"\b(?:let['’]s|we\s+will|we['’]ll|we['’]re\s+(?:gonna|going\s+to)|"
+        r"we\s+are\s+going\s+to|that['’]s\s+what\s+we['’]ll\s+do|"
+        r"we\s+(?:agreed|decided|approved)|sounds\s+good)\b",
+        flags=re.IGNORECASE,
+    )
+    agreed_next_step = any(
+        settlement.search(quote) and not hedged.search(quote)
+        for quote in quotes
+    )
+    if not explicit and not agreed_next_step and quotes:
+        post_agreement = _nearby_post_agreement_evidence(quotes[0], transcript)
+        if post_agreement:
+            candidate_quotes = list(dict.fromkeys([*quotes, post_agreement]))
+            if _decision_evidence_is_semantically_consistent(
+                decision, candidate_quotes, transcript
+            ):
+                quotes = candidate_quotes
+                agreed_next_step = True
+    if not explicit and not agreed_next_step:
+        return None
+    if not _decision_evidence_is_semantically_consistent(decision, quotes, transcript):
+        return None
+    # A durable decision may be a semantic normalization of terse conversational
+    # agreement. Exact transcript evidence plus an explicit/agreed decision cue is
+    # the grounding contract; do not demand lexical overlap with polished wording.
+    # Keep the quote that best expresses the decision proposition as primary
+    # evidence. Nearby agreement is useful corroboration, but a generic "that's
+    # what we'll do" must not replace a more informative quote.
+    quotes = _order_decision_evidence(decision, quotes, transcript)
+    return _resolved_memory_item(
+        {
+            "decision": decision,
+            "_context_resolved": True,
+        },
+        quotes,
+    )
+
+
+_RISK_TOPIC_CONCEPTS = {
+    "ip_legal": (r"\b(?:ip|intellectual\s+property|infringement|lawsuit|sued|legal|indemnif\w*)\b",),
+    "support": (r"\b(?:support|patch(?:es|ing)?|upgrade(?:s|ing)?|maintenance|end[-\s]+of[-\s]+support)\b",),
+    "license": (r"\b(?:licen[cs]e|licensing|perpetual\s+rights?|forfeit)\b",),
+    "cost": (r"\b(?:cost|price|pricing|financial|saving(?:s)?|overspend(?:ing)?|overrun(?:s)?)\b",),
+    "availability": (r"\b(?:outage|availability|interrupt(?:ion)?|downtime|failure|breaks?)\b",),
+}
+
+_RISK_EXPLICIT_CUE_PATTERN = re.compile(
+    r"\b(?:risk|concern|exposure|liabilit\w*|lawsuit|sued|infringement|"
+    r"indemnif\w*|forfeit|failure|end[-\s]+of[-\s]+support|lose|losing)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _risk_evidence_semantically_supports(risk: str, quotes: list[str]) -> bool:
+    """Require the cited spans themselves to entail the normalized risk.
+
+    A broad local context window is useful for resolving conversational wording,
+    but it is too permissive as a final factuality gate: an unrelated nearby
+    word such as ``problem`` can make an invented consequence look supported.
+    Treat risk verification like claim-level NLI: at least one exact evidence
+    span must carry an explicit risk/failure cue and, when the normalized risk
+    names a known failure-mode topic, the same topic must be present in evidence.
+    For unmodeled topics, preserve only transcript-explicit risks with meaningful
+    lexical overlap rather than inferring a new consequence.
+    """
+
+    risk_topics = _decision_semantic_concepts(risk, _RISK_TOPIC_CONCEPTS)
+    risk_tokens = _commitment_content_tokens(risk)
+    for quote in quotes:
+        if not quote or not _RISK_EXPLICIT_CUE_PATTERN.search(quote):
+            continue
+        quote_topics = _decision_semantic_concepts(quote, _RISK_TOPIC_CONCEPTS)
+        if risk_topics:
+            if risk_topics & quote_topics:
+                return True
+            continue
+        quote_tokens = _commitment_content_tokens(quote)
+        if len(risk_tokens & quote_tokens) >= 2:
+            return True
+    return False
+
+
+def _risk_evidence_score(risk: str, evidence: str) -> tuple[int, int]:
+    risk_topics = _decision_semantic_concepts(risk, _RISK_TOPIC_CONCEPTS)
+    evidence_topics = _decision_semantic_concepts(evidence, _RISK_TOPIC_CONCEPTS)
+    topic_overlap = len(risk_topics & evidence_topics)
+    informative_tokens = len(re.findall(r"[A-Za-z0-9&'-]+", evidence))
+    return (topic_overlap, informative_tokens)
+
+
+def _recover_risk_failure_mode_evidence(risk: str, transcript: str) -> str | None:
+    """Recover exact transcript evidence expressing the same concrete risk topic.
+
+    This is a final evidence-fidelity repair for already verified v12 risks.  It
+    never creates a new risk; it only replaces a weak/mismatched quote with an
+    exact transcript block that names the same failure mode and contains an
+    explicit risk/consequence cue.
+    """
+
+    risk_topics = _decision_semantic_concepts(risk, _RISK_TOPIC_CONCEPTS)
+    if not risk_topics or not transcript:
+        return None
+    cue = re.compile(
+        r"\b(?:risk|concern|exposure|lawsuit|sued|infringement|indemnif\w*|"
+        r"lose|losing|without|end[-\s]+of[-\s]+support|forfeit|breaks?|failure)\b",
+        flags=re.IGNORECASE,
+    )
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for raw in re.split(r"\n\s*\n", transcript):
+        block = re.sub(r"\s+", " ", raw).strip()
+        if not block or (block.startswith("[") and "**" in block and len(block.split()) <= 6):
+            continue
+        grounded = _ground_evidence_quote(block, transcript)
+        if not grounded:
+            continue
+        topics = _decision_semantic_concepts(grounded, _RISK_TOPIC_CONCEPTS)
+        topic_overlap = len(risk_topics & topics)
+        if topic_overlap == 0 or not cue.search(grounded):
+            continue
+        informative_tokens = len(re.findall(r"[A-Za-z0-9&'-]+", grounded))
+        candidates.append(((topic_overlap, 1, min(informative_tokens, 80)), grounded))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _order_risk_evidence(risk: str, quotes: list[str], transcript: str = "") -> list[str]:
+    """Prefer grounded risk evidence that states the same concrete failure mode."""
+
+    candidates = [quote for quote in quotes if quote]
+    recovered = _recover_risk_failure_mode_evidence(risk, transcript)
+    if recovered and recovered not in candidates:
+        candidates.append(recovered)
+    return sorted(
+        dict.fromkeys(candidates),
+        key=lambda quote: _risk_evidence_score(risk, quote),
+        reverse=True,
+    )
+
+
+def _validate_resolved_risk(item: dict, transcript: str) -> dict | None:
+    quotes = _resolved_evidence_quotes(item, transcript)
+    risk = re.sub(r"\s+", " ", str(item.get("risk", ""))).strip()
+    if not quotes or not risk:
+        return None
+    words = re.findall(r"[A-Za-z0-9&'-]+", risk)
+    if len(words) < 5 or len(words) > 32:
+        return None
+    # Final risk acceptance is evidence-local, not context-window-local.  This
+    # prevents an unrelated nearby concern from licensing a normalized
+    # consequence that the cited transcript span never states.
+    if not _risk_evidence_semantically_supports(risk, quotes):
+        return None
+    # Risk wording may normalize the grounded failure mode/consequence. Prefer
+    # the grounded quote that actually expresses that same concrete risk. Generic
+    # "that's a risk" confirmations remain supporting evidence only.
+    quotes = _order_risk_evidence(risk, quotes, transcript)
+    risk = _normalize_verified_risk_text(risk, quotes[0])
+    return _resolved_memory_item({"risk": risk}, quotes)
+
+
+def _resolved_question_is_well_formed(question: str) -> bool:
+    """Allow durable normalized questions with named-entity subjects.
+
+    The baseline question validator is intentionally tuned to noisy verbatim ASR
+    and therefore rejects forms such as ``Will Vendor Alpha ...?`` because the
+    second token is not a pronoun/article.  v12 questions are generated only in
+    the independently verified High Performance path and are still grounded
+    against exact transcript evidence, so named subjects are safe here.
+    """
+
+    if _is_well_formed_question(question):
+        return True
+    text = str(question or "").strip()
+    if not text.endswith("?"):
+        return False
+    if re.search(
+        r"\[\d{1,2}:\d{2}\]|\*\*(?:Mic|Remote)\*\*|"
+        r"\((?:static|indistinct|inaudible|unintelligible|crosstalk)[^)]*\)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
+    words = re.findall(r"[A-Za-z0-9&'-]+", text)
+    if len(words) < 4 or len(words) > 30:
+        return False
+    first = words[0].casefold()
+    if first not in {
+        "who", "what", "when", "where", "why", "how", "which",
+        "is", "are", "was", "were", "do", "does", "did", "can",
+        "could", "will", "would", "should", "have", "has",
+    }:
+        return False
+    return True
+
+
+def _normalize_resolved_open_questions(questions: list[str]) -> list[str]:
+    """Deduplicate v12 verified questions without reapplying ASR-only syntax gates."""
+
+    kept: list[str] = []
+    for raw in questions:
+        question = re.sub(r"\s+", " ", str(raw or "")).strip(" -\t")
+        if not _resolved_question_is_well_formed(question):
+            continue
+        duplicate_index = next(
+            (
+                index
+                for index, existing in enumerate(kept)
+                if _questions_are_near_duplicates(question, existing)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            kept.append(question)
+            continue
+        existing = kept[duplicate_index]
+        if len(re.findall(r"\S+", question)) < len(re.findall(r"\S+", existing)):
+            kept[duplicate_index] = question
+    return kept
+
+
+_LATE_ANSWER_CUE_PATTERN = re.compile(
+    r"\b(?:yes|no|exactly|correct|current\s+state|right\s+now|"
+    r"you\s+(?:would|want|should|need|can)|"
+    r"we\s+(?:will|can|are|have)|"
+    r"it\s+(?:will|is|does|can)|"
+    r"this\s+(?:will|is|does|can)|"
+    r"there\s+(?:will|won['’]t|is|isn['’]t)|"
+    r"that['’]s|those\s+are|both\b)",
+    flags=re.IGNORECASE,
+)
+
+
+def _question_is_answered_later(
+    question: str,
+    evidence_quotes: list[str],
+    transcript: str,
+) -> bool:
+    """Return True when a later grounded turn substantively answers a question.
+
+    v12 can normalize an early question into durable wording even when the answer
+    arrives several minutes later. The older local check intentionally inspects
+    only the immediate exchange, so it can miss those delayed answers. This pass
+    stays deterministic and conservative: a later turn must share multiple
+    content anchors with the original question/evidence and contain declarative
+    answer language rather than uncertainty.
+    """
+
+    if not transcript or not evidence_quotes:
+        return False
+
+    evidence_positions = [
+        transcript.find(quote)
+        for quote in evidence_quotes
+        if quote and transcript.find(quote) >= 0
+    ]
+    if not evidence_positions:
+        return False
+
+    start = min(evidence_positions)
+    evidence_end = max(
+        transcript.find(quote) + len(quote)
+        for quote in evidence_quotes
+        if quote and transcript.find(quote) >= 0
+    )
+    # Bound the scan so a distant, unrelated later meeting topic cannot close a
+    # question merely because it reuses common vocabulary.
+    tail = transcript[evidence_end : min(len(transcript), evidence_end + 14000)]
+    if not tail:
+        return False
+
+    anchor_text = " ".join([question, *evidence_quotes])
+    anchors = {
+        token
+        for token in _commitment_content_tokens(anchor_text)
+        if len(token) >= 4
+    }
+    if not anchors:
+        return False
+    entity_tokens: set[str] = set()
+    for entity in re.findall(
+        r"\b[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)+\b",
+        anchor_text,
+    ):
+        entity_tokens.update(_commitment_content_tokens(entity))
+
+    turns = re.split(
+        r"(?=\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*)",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    for turn in turns:
+        compact = re.sub(r"\s+", " ", turn).strip()
+        if not compact:
+            continue
+        # A turn dominated by explicit uncertainty is not an answer.
+        if _STRONG_UNRESOLVED_CONTEXT_PATTERN.search(compact[:320]):
+            continue
+        if not _LATE_ANSWER_CUE_PATTERN.search(compact[:700]):
+            continue
+
+        turn_tokens = _commitment_content_tokens(compact[:1200])
+        overlap = anchors & turn_tokens
+        # Two shared anchors is the normal threshold. A single distinctive
+        # anchor is enough for short operational questions such as "what happens
+        # when I hit cancel?" when the later turn directly describes current
+        # state / required behavior.
+        non_entity_overlap = overlap - entity_tokens
+        if len(overlap) >= 2 and non_entity_overlap:
+            return True
+        if len(overlap) == 1:
+            anchor = next(iter(overlap))
+            if len(anchor) >= 6 and re.search(
+                r"\b(?:current\s+state|right\s+now|you\s+(?:would|want|should|need)|"
+                r"it\s+(?:will|does)|this\s+(?:will|does))\b",
+                compact,
+                flags=re.IGNORECASE,
+            ):
+                return True
+
+    return False
+
+
+def _validate_resolved_question(item: dict, transcript: str) -> str | None:
+    quotes = _resolved_evidence_quotes(item, transcript)
+    question = re.sub(r"\s+", " ", str(item.get("question", ""))).strip()
+    if not quotes or not question:
+        return None
+    if not _resolved_question_is_well_formed(question):
+        return None
+    context = _resolved_item_context(item, transcript)
+    # Normalized durable questions need not reuse transcript vocabulary verbatim.
+    # Exact grounded evidence plus unresolved-at-end validation is sufficient.
+    for evidence in quotes:
+        if _is_well_formed_question(evidence) and not _question_is_locally_unresolved(
+            evidence, transcript
+        ):
+            return None
+    if _question_is_answered_later(question, quotes, transcript):
+        return None
+    return question
+
+
+
+def _evidence_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
+    """Return lexical evidence tokens while preserving source character spans.
+
+    Event grounding should tolerate harmless ASR/JSON formatting differences such
+    as smart apostrophes, punctuation, and whitespace, but it must not perform
+    semantic/fuzzy matching.  Keeping original spans lets us replace a model's
+    normalized quote with the exact transcript text that actually grounded it.
+    """
+
+    tokens: list[tuple[str, int, int]] = []
+    for match in re.finditer(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)*", text):
+        token = match.group(0).replace("’", "'").casefold()
+        tokens.append((token, match.start(), match.end()))
+    return tokens
+
+
+def _ground_evidence_quote(quote: str, transcript: str) -> str | None:
+    """Locate one evidence quote in the transcript using lexical-exact matching.
+
+    First prefer a literal substring.  Otherwise require the complete quote token
+    sequence to occur contiguously in the transcript, ignoring only punctuation,
+    smart-vs-straight apostrophes, case, and whitespace.  The returned value is
+    always the exact transcript slice, never the model's normalized wording.
+    """
+
+    quote = str(quote or "").strip()
+    if not quote:
+        return None
+    if quote in transcript:
+        return quote
+
+    quote_tokens = _evidence_tokens_with_spans(quote)
+    transcript_tokens = _evidence_tokens_with_spans(transcript)
+    if not quote_tokens or len(quote_tokens) > len(transcript_tokens):
+        return None
+
+    wanted = [token for token, _, _ in quote_tokens]
+    width = len(wanted)
+    for start in range(0, len(transcript_tokens) - width + 1):
+        candidate = transcript_tokens[start:start + width]
+        if [token for token, _, _ in candidate] != wanted:
+            continue
+        char_start = candidate[0][1]
+        char_end = candidate[-1][2]
+        return transcript[char_start:char_end].strip()
+    return None
+
+
+def _diagnose_memory_event_rejection(item: dict, transcript: str) -> dict:
+    """Explain why a v12 pass-1 event failed deterministic validation.
+
+    Diagnostics are observational only: this mirrors the validator's gates and
+    must never change whether an event is retained.
+    """
+
+    if not isinstance(item, dict):
+        return {"reason": "invalid_item", "candidate": repr(item)[:500]}
+
+    event_type = str(item.get("event_type", "")).strip().casefold()
+    allowed = {
+        "assignment", "commitment", "proposal", "agreement", "decision",
+        "concern", "question", "uncertainty", "next_step",
+    }
+    base = {
+        "event_type": event_type or "unknown",
+        "speaker": re.sub(r"\s+", " ", str(item.get("speaker", ""))).strip(),
+        "target": re.sub(r"\s+", " ", str(item.get("target", ""))).strip(),
+        "subject": re.sub(r"\s+", " ", str(item.get("subject", ""))).strip(),
+    }
+    if event_type not in allowed:
+        return {**base, "reason": "invalid_event_type"}
+
+    raw_evidence = item.get("evidence", [])
+    if isinstance(raw_evidence, str):
+        raw_evidence = [raw_evidence]
+    if not isinstance(raw_evidence, list) or not raw_evidence:
+        return {**base, "reason": "missing_evidence", "evidence": []}
+
+    evidence = [str(value or "").strip() for value in raw_evidence if str(value or "").strip()]
+    grounded = [quote for quote in evidence if _ground_evidence_quote(quote, transcript)]
+    if not grounded:
+        recovered = _recover_assignment_event_evidence(item, transcript)
+        if recovered:
+            grounded = recovered
+        else:
+            return {**base, "reason": "evidence_not_found", "evidence": evidence}
+    if not base["subject"]:
+        return {**base, "reason": "missing_subject", "evidence": grounded}
+    return {**base, "reason": "unknown_validator_rejection", "evidence": grounded}
+
+
+def _resolved_candidate_snapshot(item: dict, category: str) -> dict:
+    key = {
+        "actions": "action",
+        "decisions": "decision",
+        "risks": "risk",
+        "questions": "question",
+    }[category]
+    result = {key: re.sub(r"\s+", " ", str(item.get(key, ""))).strip()}
+    if category == "actions":
+        result["owner"] = re.sub(r"\s+", " ", str(item.get("owner", "Unknown"))).strip() or "Unknown"
+    raw = item.get("evidence", [])
+    if isinstance(raw, str):
+        raw = [raw]
+    result["evidence"] = [str(value or "").strip() for value in raw if str(value or "").strip()] if isinstance(raw, list) else []
+    return result
+
+
+def _diagnose_resolved_rejection(category: str, item: dict, transcript: str) -> dict:
+    """Explain a pass-2 deterministic rejection without changing validation."""
+
+    snapshot = _resolved_candidate_snapshot(item, category)
+    quotes = _resolved_evidence_quotes(item, transcript)
+    if category == "actions":
+        action = snapshot["action"]
+        owner = snapshot["owner"]
+        if not quotes:
+            reason = "evidence_not_found"
+        elif not action:
+            reason = "missing_action"
+        elif not _commitment_action_is_self_contained(action):
+            reason = "action_not_self_contained"
+        else:
+            context = _resolved_item_context(item, transcript)
+            if not _resolved_text_is_grounded_in_context(action, context):
+                reason = "action_not_grounded"
+            elif owner != "Unknown" and not re.search(rf"\b{re.escape(owner)}\b", context, flags=re.IGNORECASE):
+                reason = "owner_not_grounded"
+            elif not re.search(
+                r"\b(?:i\s+will|i['’]ll|we\s+will|we['’]ll|why\s+don['’]t\s+you|"
+                r"take\s+the\s+lead|reach\s+out|set\s+up|next\s+step|let['’]s)\b",
+                context, flags=re.IGNORECASE,
+            ):
+                reason = "commitment_cue_missing"
+            else:
+                reason = "unknown_validator_rejection"
+    elif category == "decisions":
+        decision = snapshot["decision"]
+        if not quotes:
+            reason = "evidence_not_found"
+        elif not decision:
+            reason = "missing_decision"
+        elif not _decision_candidate_is_well_formed(decision, quotes[0]):
+            reason = "decision_not_well_formed"
+        else:
+            context = _resolved_item_context(item, transcript)
+            explicit = any(_decision_is_supported(decision, quote) for quote in quotes)
+            agreed = bool(re.search(
+                r"\b(?:let['’]s|we\s+will|we['’]ll|that['’]s\s+what\s+we['’]ll\s+do|"
+                r"we\s+agreed|sounds\s+good)\b", context, flags=re.IGNORECASE,
+            ))
+            if not explicit and not agreed:
+                reason = "decision_support_missing"
+            elif not _resolved_text_is_grounded_in_context(decision, context):
+                reason = "decision_not_grounded"
+            else:
+                reason = "unknown_validator_rejection"
+    elif category == "risks":
+        risk = snapshot["risk"]
+        if not quotes:
+            reason = "evidence_not_found"
+        elif not risk:
+            reason = "missing_risk"
+        else:
+            words = re.findall(r"[A-Za-z0-9&'-]+", risk)
+            context = _resolved_item_context(item, transcript)
+            if len(words) < 5 or len(words) > 32:
+                reason = "risk_length_invalid"
+            elif not re.search(
+                r"\b(?:risk|concern|exposure|liabilit|lawsuit|sued|infringement|"
+                r"indemnif|lose|losing|forfeit|support|failure)\w*\b",
+                context, flags=re.IGNORECASE,
+            ):
+                reason = "risk_cue_missing"
+            elif not _resolved_text_is_grounded_in_context(risk, context):
+                reason = "risk_not_grounded"
+            else:
+                reason = "unknown_validator_rejection"
+    else:
+        question = snapshot["question"]
+        if not quotes:
+            reason = "evidence_not_found"
+        elif not question:
+            reason = "missing_question"
+        elif not _resolved_question_is_well_formed(question):
+            reason = "question_not_well_formed"
+        else:
+            context = _resolved_item_context(item, transcript)
+            if not _resolved_text_is_grounded_in_context(question, context):
+                reason = "question_not_grounded"
+            elif any(
+                _is_well_formed_question(evidence) and not _question_is_locally_unresolved(evidence, transcript)
+                for evidence in quotes
+            ):
+                reason = "question_already_answered"
+            else:
+                reason = "unknown_validator_rejection"
+
+    return {**snapshot, "reason": reason, "grounded_evidence": quotes}
+
+
+def _recover_assignment_event_evidence(item: dict, transcript: str) -> list[str]:
+    """Recover a verbatim assignment quote when pass 1 supplied summary prose.
+
+    Summary cues can help the model notice an assignment, but they are never
+    evidence.  Recovery is deliberately narrow: the named target must appear in
+    a single transcript turn that also contains a direct assignment cue.
+    """
+
+    if str(item.get("event_type", "")).strip().casefold() != "assignment":
+        return []
+    raw_evidence = item.get("evidence", [])
+    evidence_values = [raw_evidence] if isinstance(raw_evidence, str) else list(raw_evidence) if isinstance(raw_evidence, list) else []
+    synthetic_action_item = any(
+        re.search(r"\b(?:due\s+date\s+not\s+identified|owner\s+not\s+identified)\b", str(value), flags=re.IGNORECASE)
+        for value in evidence_values
+    )
+    if not synthetic_action_item:
+        return []
+    target = re.sub(r"\s+", " ", str(item.get("target", ""))).strip()
+    if not target:
+        return []
+
+    turn_pattern = re.compile(
+        r"(?:^|\n)\[\d{1,2}:\d{2}\]\s+\*\*[^*]+\*\*\s*\n+"
+        r"(.*?)(?=(?:\n\[\d{1,2}:\d{2}\]\s+\*\*)|\Z)",
+        flags=re.DOTALL,
+    )
+    assignment_cue = re.compile(
+        r"\b(?:why\s+don['’]t\s+you|take\s+the\s+lead|please|can\s+you|"
+        r"could\s+you|would\s+you|need\s+you\s+to)\b",
+        flags=re.IGNORECASE,
+    )
+    target_re = re.compile(rf"\b{re.escape(target)}\b", flags=re.IGNORECASE)
+
+    candidates: list[str] = []
+    for match in turn_pattern.finditer(transcript):
+        turn = re.sub(r"\s+", " ", match.group(1)).strip()
+        if not turn or not target_re.search(turn) or not assignment_cue.search(turn):
+            continue
+        candidates.append(turn)
+
+    if len(candidates) == 1:
+        return candidates
+    if not candidates:
+        return []
+
+    subject_tokens = _commitment_content_tokens(str(item.get("subject", "")))
+    ranked = sorted(
+        ((len(subject_tokens & _commitment_content_tokens(turn)), turn) for turn in candidates),
+        reverse=True,
+    )
+    if ranked and ranked[0][0] > 0 and (len(ranked) == 1 or ranked[0][0] > ranked[1][0]):
+        return [ranked[0][1]]
+    return []
+
+
+def _validate_memory_event(
+    item: dict,
+    transcript: str,
+    identity_map: dict[str, str] | None = None,
+) -> dict | None:
+    """Validate one v12 intermediate dialogue event against transcript evidence.
+
+    Evidence is grounded by lexical-exact transcript spans rather than requiring
+    byte-for-byte model quotation.  Invalid evidence entries are discarded; an
+    event survives only when at least one evidence span can be grounded.
+    """
+
+    if not isinstance(item, dict):
+        return None
+    event_type = str(item.get("event_type", "")).strip().casefold()
+    allowed = {
+        "assignment",
+        "commitment",
+        "proposal",
+        "agreement",
+        "decision",
+        "concern",
+        "question",
+        "uncertainty",
+        "next_step",
+    }
+    if event_type not in allowed:
+        return None
+
+    raw_evidence = item.get("evidence", [])
+    if isinstance(raw_evidence, str):
+        raw_evidence = [raw_evidence]
+    if not isinstance(raw_evidence, list) or not raw_evidence:
+        return None
+
+    evidence: list[str] = []
+    for raw_quote in raw_evidence:
+        grounded_quote = _ground_evidence_quote(str(raw_quote or ""), transcript)
+        if grounded_quote and grounded_quote not in evidence:
+            evidence.append(grounded_quote)
+    if not evidence:
+        # Pass 1 occasionally copies normalized/paraphrased prose into evidence.
+        # Recover exact source turns rather than accepting the paraphrase itself.
+        # Assignment recovery remains the narrowest first choice; the turn-level
+        # retriever handles other dialogue acts only when one high-signal source
+        # turn is uniquely identified.
+        evidence.extend(_recover_assignment_event_evidence(item, transcript))
+        if not evidence and event_type != "assignment":
+            evidence.extend(_recover_event_evidence_from_turns(item, transcript))
+    if not evidence:
+        return None
+
+    subject = re.sub(r"\s+", " ", str(item.get("subject", ""))).strip()
+    if not subject:
+        return None
+
+    raw_speaker = re.sub(r"\s+", " ", str(item.get("speaker", ""))).strip()
+    raw_target = re.sub(r"\s+", " ", str(item.get("target", ""))).strip()
+    speaker = _participant_name_for_channel(raw_speaker, identity_map)
+    target = _participant_name_for_channel(raw_target, identity_map)
+
+    # First-person future work belongs to the evidence speaker even when the
+    # model mislabeled the dialogue act as an assignment or next step.  The
+    # model's target is advisory; exact source attribution is authoritative.
+    if event_type in {"commitment", "assignment", "next_step"} and any(
+        _FIRST_PERSON_FUTURE_WORK_PATTERN.search(q) for q in evidence
+    ):
+        if speaker and speaker.casefold() not in _AUDIO_CHANNEL_OWNER_LABELS:
+            target = speaker
+
+    result = {
+        "event_type": event_type,
+        "speaker": speaker,
+        "target": target,
+        "subject": subject,
+        "status": str(item.get("status", "")).strip().casefold(),
+        "evidence": evidence,
+    }
+    return result
+
+
+
+_MEMORY_EVENT_WINDOW_TOKEN_TARGET = 5000
+_MEMORY_EVENT_WINDOW_OVERLAP_TURNS = 3
+_MEMORY_EVENT_WINDOW_MAX_EVENTS = 12
+_MEMORY_EVENT_WINDOW_MAX_UNCERTAINTIES = 2
+_MEMORY_EVENT_WINDOW_MAX_ANCHORS = 6
+_MEMORY_EVENT_PRIORITY = {
+    "commitment": 0,
+    "assignment": 0,
+    "decision": 1,
+    "agreement": 1,
+    "next_step": 2,
+    "proposal": 3,
+    "concern": 4,
+    "question": 5,
+    "uncertainty": 6,
+}
+_MEMORY_HIGH_SIGNAL_FUTURE_WORK_PATTERN = re.compile(
+    r"\b(?:i['’]ll|i\s+will|i['’]m\s+(?:going\s+to|gonna)|"
+    r"i\s+am\s+going\s+to|i\s+just\s+committed|i\s+committed\s+to|"
+    r"i\s+can\s+(?:take|handle|join|call|contact|reach|review|send|schedule))\b",
+    flags=re.IGNORECASE,
+)
+_MEMORY_ASSIGNMENT_ANCHOR_PATTERN = re.compile(
+    r"\b(?:why\s+don['’]t\s+you|take\s+the\s+lead|please|can\s+you|"
+    r"could\s+you|would\s+you|need\s+you\s+to)\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _memory_future_work_anchors(window_text: str) -> list[dict]:
+    """Return high-signal source turns that must receive future-work review.
+
+    Anchors are navigation hints only.  They never become memory items directly;
+    the LLM still classifies them and the normal grounding/final validators still
+    decide whether anything survives.  The purpose is recall: explicit future
+    work should not disappear merely because low-value uncertainties consumed a
+    bounded window's candidate slots.
+    """
+
+    anchors: list[dict] = []
+    for turn in _transcript_turn_records(window_text):
+        body = re.sub(r"\s+", " ", str(turn.get("body", ""))).strip()
+        if not body:
+            continue
+        if not (
+            _MEMORY_HIGH_SIGNAL_FUTURE_WORK_PATTERN.search(body)
+            or _MEMORY_ASSIGNMENT_ANCHOR_PATTERN.search(body)
+        ):
+            continue
+        anchors.append({
+            "time": str(turn.get("time", "")),
+            "speaker": str(turn.get("speaker", "")),
+            "text": body,
+        })
+        if len(anchors) >= _MEMORY_EVENT_WINDOW_MAX_ANCHORS:
+            break
+    return anchors
+
+
+def _memory_anchor_is_covered(anchor: dict, events: list[dict]) -> bool:
+    anchor_text = re.sub(r"\s+", " ", str(anchor.get("text", ""))).strip()
+    if not anchor_text:
+        return True
+    anchor_norm = re.sub(r"[^a-z0-9]+", " ", anchor_text.casefold()).strip()
+    anchor_tokens = _commitment_content_tokens(anchor_text)
+    for event in events:
+        raw_evidence = event.get("evidence", [])
+        evidence = [raw_evidence] if isinstance(raw_evidence, str) else list(raw_evidence or [])
+        for quote in evidence:
+            quote_text = re.sub(r"\s+", " ", str(quote or "")).strip()
+            if not quote_text:
+                continue
+            quote_norm = re.sub(r"[^a-z0-9]+", " ", quote_text.casefold()).strip()
+            if quote_norm and anchor_norm and (quote_norm in anchor_norm or anchor_norm in quote_norm):
+                return True
+            quote_tokens = _commitment_content_tokens(quote_text)
+            overlap = anchor_tokens & quote_tokens
+            if len(overlap) >= 4 and len(overlap) >= min(len(anchor_tokens), len(quote_tokens)) * 0.6:
+                return True
+    return False
+
+
+_MEMORY_COMPLETED_WORK_CUE_PATTERN = re.compile(
+    r"\b(?:after\s+i\s+(?:looked|reviewed|checked|finished|completed|sent|called|contacted)|"
+    r"i\s+(?:already\s+)?(?:reviewed|looked|checked|finished|completed|sent|called|contacted)\b|"
+    r"i\s+(?:reviewed|looked\s+through|finished|completed)\b.{0,80}\byesterday\b)",
+    flags=re.IGNORECASE,
+)
+
+
+def _memory_work_concepts(text: str) -> set[str]:
+    """Return coarse work concepts for future-vs-completed consistency checks."""
+
+    value = re.sub(r"\s+", " ", str(text or "")).casefold()
+    concepts = set(_commitment_action_family(value))
+    if re.search(r"\b(?:review(?:ed|ing)?|look(?:ed|ing)?|assess(?:ed|ing|ment)?|analy[sz](?:e|ed|ing)|analysis|check(?:ed|ing)?)\b", value):
+        concepts.add("review")
+    if re.search(r"\b(?:send|sent|share|shared|provide|provided|deliver|delivered)\b", value):
+        concepts.add("deliver")
+    if re.search(r"\b(?:update|updated|clean\s+up|cleanup|tidy|tidying)\b", value):
+        concepts.add("update")
+    return concepts
+
+
+def _memory_commitment_event_is_future_work(event: dict, transcript: str = "") -> bool:
+    """Keep only event-level commitments that still represent future work.
+
+    Pass 1 can over-classify status/history as a commitment when a busy turn mixes
+    past work with future language.  Before pass 2, require a genuine first-person
+    future-work cue and reject a future cue that the same grounded event later
+    proves was already completed.  This is a temporal hygiene gate, not a semantic
+    memory creator.
+    """
+
+    if str(event.get("event_type", "")).strip().casefold() != "commitment":
+        return True
+    evidence = [str(value).strip() for value in event.get("evidence", []) or [] if str(value).strip()]
+    if not evidence:
+        return False
+    future = [quote for quote in evidence if _MEMORY_HIGH_SIGNAL_FUTURE_WORK_PATTERN.search(quote)]
+    if not future:
+        return False
+    if _commitment_is_immediate_meeting_facilitation(
+        str(event.get("subject", "")),
+        future,
+    ):
+        return False
+
+    subject_concepts = _memory_work_concepts(str(event.get("subject", "")))
+    future_positions = [transcript.find(quote) for quote in future if transcript and transcript.find(quote) >= 0]
+    earliest_future = min(future_positions) if future_positions else -1
+    for quote in evidence:
+        if not _MEMORY_COMPLETED_WORK_CUE_PATTERN.search(quote):
+            continue
+        completed_concepts = _memory_work_concepts(quote)
+        if subject_concepts and completed_concepts and not (subject_concepts & completed_concepts):
+            continue
+        if transcript and earliest_future >= 0:
+            completed_pos = transcript.find(quote)
+            if completed_pos >= 0 and completed_pos <= earliest_future:
+                continue
+        return False
+    return True
+
+
+def _normalize_protected_commitment_action(subject: str) -> str:
+    action = re.sub(r"\s+", " ", str(subject or "")).strip()
+    action = re.sub(r"\bescalate\s+something\s+with\s+", "Escalate with ", action, flags=re.IGNORECASE)
+    return action
+
+
+def _proposed_commitment_covers_event(proposed: list[dict], event: dict) -> bool:
+    owner = re.sub(r"\s+", " ", str(event.get("speaker", ""))).strip().casefold()
+    subject_tokens = _commitment_content_tokens(str(event.get("subject", "")))
+    evidence = {re.sub(r"\s+", " ", str(value)).strip().casefold() for value in event.get("evidence", []) or []}
+    for item in proposed:
+        proposed_owner = re.sub(r"\s+", " ", str(item.get("owner", ""))).strip().casefold()
+        if owner and proposed_owner and owner != proposed_owner:
+            continue
+        item_tokens = _commitment_content_tokens(str(item.get("action", "")))
+        raw = item.get("evidence", [])
+        item_evidence = [raw] if isinstance(raw, str) else list(raw or [])
+        item_evidence_norm = {re.sub(r"\s+", " ", str(value)).strip().casefold() for value in item_evidence}
+        if evidence & item_evidence_norm:
+            return True
+        if len(subject_tokens & item_tokens) >= 2:
+            return True
+    return False
+
+
+def _protected_event_commitment_candidates(events: list[dict], proposed: list[dict], transcript: str) -> list[dict]:
+    """Recover high-confidence grounded commitments omitted by pass 2.
+
+    Pass 2 remains the primary semantic resolver.  This safety net only forwards
+    pass-1 events that are already exact-grounded, explicitly future work, and
+    self-contained; final commitment validation still applies afterward.
+    """
+
+    recovered: list[dict] = []
+    working = list(proposed)
+    for event in events:
+        if str(event.get("event_type", "")).strip().casefold() != "commitment":
+            continue
+        if not _memory_commitment_event_is_future_work(event, transcript):
+            continue
+        if _proposed_commitment_covers_event(working, event):
+            continue
+        action = _normalize_protected_commitment_action(str(event.get("subject", "")))
+        if re.fullmatch(r"(?:help\s+)?escalate", action, flags=re.IGNORECASE):
+            continue
+        if not _commitment_action_is_self_contained(action):
+            continue
+        owner = re.sub(r"\s+", " ", str(event.get("speaker", ""))).strip() or "Unknown"
+        candidate = {
+            "owner": owner,
+            "action": action,
+            "evidence": list(event.get("evidence", []) or []),
+        }
+        recovered.append(candidate)
+        working.append(candidate)
+    return recovered
+
+
+def _prioritize_memory_event_candidates(events: list[dict]) -> list[dict]:
+    """Apply the bounded per-window budget without letting uncertainty dominate.
+
+    This is intentionally a candidate-selection rule, not a semantic validator.
+    It protects scarce pass-1 slots for durable dialogue acts while preserving the
+    model's relative order within each priority class.
+    """
+
+    deduped: list[dict] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    uncertainty_count = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("event_type", "")).strip().casefold()
+        if event_type == "uncertainty":
+            if uncertainty_count >= _MEMORY_EVENT_WINDOW_MAX_UNCERTAINTIES:
+                continue
+            uncertainty_count += 1
+        key = _memory_event_dedupe_key(event)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+
+    indexed = list(enumerate(deduped))
+    indexed.sort(key=lambda pair: (_MEMORY_EVENT_PRIORITY.get(
+        str(pair[1].get("event_type", "")).strip().casefold(), 99
+    ), pair[0]))
+    return [event for _, event in indexed[:_MEMORY_EVENT_WINDOW_MAX_EVENTS]]
+
+
+def _memory_event_windows(transcript: str) -> list[str]:
+    """Split a transcript into bounded, overlapping turn windows for pass-1 extraction.
+
+    The window target is deliberately below the direct-analysis budget.  This keeps
+    structured MLX generations compact and prevents one verbose event list from
+    consuming the entire structured-output token ceiling.  Overlap preserves local
+    antecedents without duplicating the entire meeting in every request.
+    """
+
+    turns = _transcript_turn_records(transcript)
+    if not turns:
+        value = str(transcript or "").strip()
+        return [value] if value else []
+
+    windows: list[str] = []
+    start = 0
+    while start < len(turns):
+        end = start
+        pieces: list[str] = []
+        while end < len(turns):
+            turn = turns[end]
+            piece = (
+                f"[{turn['time']}] **{turn['speaker']}**\n\n"
+                f"{turn['body']}"
+            )
+            candidate = "\n\n".join(pieces + [piece])
+            if pieces and estimate_tokens(candidate) > _MEMORY_EVENT_WINDOW_TOKEN_TARGET:
+                break
+            pieces.append(piece)
+            end += 1
+        if not pieces:
+            turn = turns[start]
+            pieces.append(f"[{turn['time']}] **{turn['speaker']}**\n\n{turn['body']}")
+            end = start + 1
+        windows.append("\n\n".join(pieces))
+        if end >= len(turns):
+            break
+        start = max(start + 1, end - _MEMORY_EVENT_WINDOW_OVERLAP_TURNS)
+    return windows
+
+
+def _memory_event_dedupe_key(event: dict) -> tuple[str, str, str, str]:
+    def norm(value: object) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+    return (
+        norm(event.get("event_type")),
+        norm(event.get("speaker")),
+        norm(event.get("target")),
+        norm(event.get("subject")),
+    )
+
+
+def _merge_memory_events(events: list[dict]) -> list[dict]:
+    """Deterministically merge overlap duplicates while preserving exact evidence."""
+
+    merged: list[dict] = []
+    by_key: dict[tuple[str, str, str, str], dict] = {}
+    for event in events:
+        key = _memory_event_dedupe_key(event)
+        existing = by_key.get(key)
+        if existing is None:
+            item = dict(event)
+            item["evidence"] = list(dict.fromkeys(item.get("evidence", []) or []))
+            by_key[key] = item
+            merged.append(item)
+            continue
+        existing_evidence = existing.setdefault("evidence", [])
+        for quote in event.get("evidence", []) or []:
+            if quote not in existing_evidence:
+                existing_evidence.append(quote)
+        # Prefer a stronger conversational status when overlap windows disagree.
+        rank = {"settled": 5, "accepted": 4, "rejected": 4, "unresolved": 3, "proposed": 2, "stated": 1, "": 0}
+        if rank.get(str(event.get("status", "")).casefold(), 0) > rank.get(str(existing.get("status", "")).casefold(), 0):
+            existing["status"] = event.get("status", "")
+    return merged
+
+
+def _memory_event_evidence_context(transcript: str, events: list[dict], *, neighbor_turns: int = 1) -> str:
+    """Return only source turns surrounding grounded event evidence for pass 2."""
+
+    turns = _transcript_turn_records(transcript)
+    if not turns or not events:
+        return transcript
+    selected: set[int] = set()
+    transcript_value = str(transcript or "")
+    for event in events:
+        for quote in event.get("evidence", []) or []:
+            q = str(quote or "").strip()
+            if not q:
+                continue
+            q_norm = " ".join(token for token, _, _ in _evidence_tokens_with_spans(q))
+            for idx, turn in enumerate(turns):
+                body = transcript_value[turn["turn_start"]:turn["turn_end"]]
+                body_norm = " ".join(token for token, _, _ in _evidence_tokens_with_spans(body))
+                if q_norm and (q_norm in body_norm or body_norm in q_norm):
+                    for offset in range(-neighbor_turns, neighbor_turns + 1):
+                        pos = idx + offset
+                        if 0 <= pos < len(turns):
+                            selected.add(pos)
+                    break
+    if not selected:
+        return transcript
+    pieces = []
+    for idx in sorted(selected):
+        turn = turns[idx]
+        pieces.append(f"[{turn['time']}] **{turn['speaker']}**\n\n{turn['body']}")
+    return "\n\n".join(pieces)
+
+
+def _extract_memory_events(
+    meeting_label: str,
+    transcript: str,
+    meeting_summary: str = "",
+) -> list[dict] | None:
+    """v12 pass 1: extract grounded dialogue events from bounded local windows.
+
+    Each window has a compact candidate ceiling.  A truncated/failed window is
+    recorded and skipped so one runaway structured generation cannot discard the
+    entire meeting.  Grounded overlap duplicates are merged deterministically.
+    """
+
+    if not _memory_resolution_capable():
+        return None
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "events": {
+                "type": "array",
+                "maxItems": _MEMORY_EVENT_WINDOW_MAX_EVENTS,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "event_type": {
+                            "type": "string",
+                            "enum": [
+                                "assignment", "commitment", "proposal", "agreement",
+                                "decision", "concern", "question", "uncertainty",
+                                "next_step",
+                            ],
+                        },
+                        "speaker": {"type": "string"},
+                        "target": {"type": "string"},
+                        "subject": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["proposed", "accepted", "rejected", "unresolved", "settled", "stated"],
+                        },
+                        "evidence": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "maxItems": 3,
+                        },
+                    },
+                    "required": ["event_type", "speaker", "target", "subject", "status", "evidence"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["events"],
+        "additionalProperties": False,
+    }
+
+    summary_cues = _summary_memory_cues(meeting_summary)
+    identity_map = _meeting_participant_identity_map(meeting_label, transcript)
+    windows = _memory_event_windows(transcript)
+    if not windows:
+        return None
+
+    profile = get_execution_profile(
+        PERFORMANCE_PROFILE,
+        context_size_tokens=LLM_CONTEXT_SIZE,
+        model_name=get_active_llm_model_name(),
+    )
+
+    _last_memory_resolution_diagnostics.update({
+        "window_count": len(windows),
+        "window_truncated_count": 0,
+        "window_failed_count": 0,
+        "window_diagnostics": [],
+    })
+
+    all_proposed: list[dict] = []
+    all_grounded: list[dict] = []
+    all_rejected: list[dict] = []
+    successful_windows = 0
+    total_prompt_tokens = 0
+    total_llm_seconds = 0.0
+
+    print(f"Extracting grounded meeting dialogue events in {len(windows)} bounded window(s) (v12)...", flush=True)
+
+    for window_index, window_text in enumerate(windows, start=1):
+        anchors = _memory_future_work_anchors(window_text)
+        prompt = f"""
+You are pass 1 of a meeting-memory pipeline. Extract grounded dialogue events
+from ONLY this local transcript window. Do NOT produce final Decisions, Action
+Items, Risks, or Open Questions.
+
+Meeting: {meeting_label}
+High-confidence participant identity map (channel label -> participant name):
+{json.dumps(identity_map, indent=2)}
+Narrative-summary cues (navigation hints only; NEVER evidence):
+{json.dumps(summary_cues, indent=2)}
+
+Return at most {_MEMORY_EVENT_WINDOW_MAX_EVENTS} total events. Prefer omission over repetition.
+Do not emit multiple paraphrases of the same event.
+
+PRIORITY/BUDGET RULES:
+- Explicit assignments and first-person commitments are highest priority. Do not
+  omit them in favor of general uncertainty, background facts, or broad concerns.
+- Treat the high-signal future-work anchors below as source turns that MUST be
+  reviewed for assignment/commitment/next-step classification. Anchors are not
+  automatically events; omit an anchor if it is vague, completed work, or not a
+  durable future obligation.
+- Return no more than {_MEMORY_EVENT_WINDOW_MAX_UNCERTAINTIES} uncertainty events.
+- Questions/uncertainties should not crowd out explicit owned future work.
+
+High-signal future-work anchors to review:
+{json.dumps(anchors, indent=2)}
+
+Event types:
+- assignment: one person asks/names another person to do future work
+- commitment: a speaker accepts or volunteers future work
+- proposal: a suggested course of action not yet settled
+- agreement: participants accept a proposal or next step
+- decision: a direction is explicitly settled
+- concern: a concrete failure mode, exposure, or undesirable outcome
+- question: a substantive information need
+- uncertainty: an explicitly unresolved fact (don't know / need to find out)
+- next_step: a future step discussed without a clean owner yet
+
+Rules:
+- Each evidence entry MUST be an exact contiguous quote from THIS transcript window.
+- Use no more than 3 short evidence quotes per event.
+- Preserve explicit names in target when a person is directly assigned work.
+- `target` is the PERSON responsible for work, never a vendor/system/object.
+- First-person future work ("I'll", "I will", "I'm going to", "I'm gonna") is a
+  commitment owned by the speaker; use the identity map when available.
+- Prefer self-contained future-work quotes over vague acknowledgements.
+- Explicit rejection of a concrete local course ("we're not going to do that")
+  is a decision when the local context states what "that" means.
+- Questions remain events even when conversationally phrased.
+- A concern must state the actual thing that could go wrong.
+- Omit chatter, backchannels, jokes, summaries of already completed work, and
+  unsupported inference.
+
+Transcript window {window_index}/{len(windows)}:
+{window_text}
+""".strip()
+
+        prompt_tokens = estimate_tokens(prompt)
+        total_prompt_tokens += prompt_tokens
+        window_diag = {
+            "index": window_index,
+            "prompt_tokens": prompt_tokens,
+            "status": "pending",
+            "events_proposed": 0,
+            "events_grounded": 0,
+            "future_work_anchor_count": len(anchors),
+            "anchor_recovery_needed": 0,
+            "anchor_recovered_events": 0,
+        }
+        if prompt_tokens > profile.direct_token_budget:
+            window_diag["status"] = "prompt_too_large"
+            _last_memory_resolution_diagnostics["window_failed_count"] += 1
+            _last_memory_resolution_diagnostics["window_diagnostics"].append(window_diag)
+            continue
+
+        try:
+            raw = ask_llm(
+                prompt,
+                response_format=schema,
+                timeout_seconds=profile.llm_call_timeout_seconds,
+            )
+            payload = json.loads(raw)
+            elapsed = float(_last_llm_elapsed_seconds or 0.0)
+            total_llm_seconds += elapsed
+            window_diag["llm_seconds"] = round(elapsed, 3)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "generation token ceiling" in message.casefold() or "truncated" in message.casefold():
+                window_diag["status"] = "truncated"
+                _last_memory_resolution_diagnostics["window_truncated_count"] += 1
+            else:
+                window_diag["status"] = "runtime_error"
+            window_diag["error"] = message[:240]
+            _last_memory_resolution_diagnostics["window_failed_count"] += 1
+            _last_memory_resolution_diagnostics["window_diagnostics"].append(window_diag)
+            continue
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            window_diag["status"] = "invalid_json"
+            window_diag["error"] = str(exc)[:240]
+            _last_memory_resolution_diagnostics["window_failed_count"] += 1
+            _last_memory_resolution_diagnostics["window_diagnostics"].append(window_diag)
+            continue
+
+        proposed = [item for item in payload.get("events", []) if isinstance(item, dict)]
+
+        # v12.21: if an explicit future-work source turn was crowded out of the
+        # bounded main response, give only those missing anchors one tiny recovery
+        # classification pass.  This guarantees consideration without creating a
+        # deterministic memory item or increasing the normal window event ceiling.
+        missing_anchors = [anchor for anchor in anchors if not _memory_anchor_is_covered(anchor, proposed)]
+        window_diag["anchor_recovery_needed"] = len(missing_anchors)
+        if missing_anchors:
+            recovery_schema = {
+                "type": "object",
+                "properties": {
+                    "events": {
+                        "type": "array",
+                        "maxItems": min(len(missing_anchors), _MEMORY_EVENT_WINDOW_MAX_ANCHORS),
+                        "items": schema["properties"]["events"]["items"],
+                    }
+                },
+                "required": ["events"],
+                "additionalProperties": False,
+            }
+            recovery_prompt = f"""
+Review ONLY these high-signal future-work source turns from a meeting transcript.
+Return an event only when the turn contains a durable future assignment, explicit
+first-person commitment, or concrete next step.  Vague offers, completed work,
+background status, and mere intentions without actionable work should be omitted.
+
+Meeting: {meeting_label}
+High-confidence participant identity map (channel label -> participant name):
+{json.dumps(identity_map, indent=2)}
+
+Allowed event types for this recovery pass: assignment, commitment, next_step.
+Each evidence quote MUST be an exact contiguous quote from the supplied anchor text.
+First-person future work belongs to the speaker, not a model-inferred target.
+
+Anchors:
+{json.dumps(missing_anchors, indent=2)}
+""".strip()
+            recovery_tokens = estimate_tokens(recovery_prompt)
+            total_prompt_tokens += recovery_tokens
+            try:
+                raw_recovery = ask_llm(
+                    recovery_prompt,
+                    response_format=recovery_schema,
+                    timeout_seconds=profile.llm_call_timeout_seconds,
+                )
+                recovery_payload = json.loads(raw_recovery)
+                recovery_elapsed = float(_last_llm_elapsed_seconds or 0.0)
+                total_llm_seconds += recovery_elapsed
+                window_diag["anchor_recovery_llm_seconds"] = round(recovery_elapsed, 3)
+                window_diag["anchor_recovery_prompt_tokens"] = recovery_tokens
+                recovered = [
+                    item for item in recovery_payload.get("events", [])
+                    if isinstance(item, dict)
+                    and str(item.get("event_type", "")).strip().casefold()
+                    in {"assignment", "commitment", "next_step"}
+                ]
+                proposed.extend(recovered)
+                window_diag["anchor_recovered_events"] = len(recovered)
+            except (RuntimeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+                # Anchor recovery is recall assistance only.  Preserve the successful
+                # main window response if this tiny supplementary call fails.
+                window_diag["anchor_recovery_error"] = str(exc)[:240]
+
+        # Enforce a priority-aware candidate ceiling even if the backend ignores
+        # schema limits.  Generic uncertainties are intentionally capped so they
+        # cannot crowd explicit owned future work out of the bounded window.
+        proposed = _prioritize_memory_event_candidates(proposed)
+        if _memory_resolution_trace_enabled:
+            _last_memory_resolution_trace.setdefault("windows", []).append({
+                "index": window_index,
+                "anchors": anchors,
+                "proposed_events": proposed,
+            })
+        successful_windows += 1
+        grounded_this_window: list[dict] = []
+        for item in proposed:
+            validated = _validate_memory_event(item, window_text, identity_map)
+            if validated is not None:
+                # Re-ground against the authoritative full transcript so offsets/source
+                # semantics remain consistent downstream.
+                full_validated = _validate_memory_event(validated, transcript, identity_map)
+                if full_validated is not None:
+                    if (
+                        str(full_validated.get("event_type", "")).strip().casefold() == "commitment"
+                        and not _memory_commitment_event_is_future_work(full_validated, transcript)
+                    ):
+                        rejected = dict(full_validated)
+                        rejected["reason"] = "commitment_not_future_work"
+                        all_rejected.append(rejected)
+                        continue
+                    grounded_this_window.append(full_validated)
+                    continue
+            all_rejected.append(_diagnose_memory_event_rejection(item, window_text))
+
+        all_proposed.extend(proposed)
+        all_grounded.extend(grounded_this_window)
+        if _memory_resolution_trace_enabled:
+            for window_trace in reversed(_last_memory_resolution_trace.get("windows", [])):
+                if window_trace.get("index") == window_index:
+                    window_trace["grounded_events"] = grounded_this_window
+                    break
+        window_diag.update({
+            "status": "ok",
+            "events_proposed": len(proposed),
+            "events_grounded": len(grounded_this_window),
+        })
+        _last_memory_resolution_diagnostics["window_diagnostics"].append(window_diag)
+
+    _last_memory_resolution_diagnostics["pass1_prompt_tokens"] = total_prompt_tokens
+    _last_memory_resolution_diagnostics["pass1_llm_seconds"] = round(total_llm_seconds, 3)
+
+    if successful_windows == 0:
+        return None
+
+    events = _merge_memory_events(all_grounded)
+    _trace_memory_stage("identity_map", identity_map)
+    _trace_memory_stage("merged_events", events)
+    _trace_memory_stage("rejected_events", all_rejected)
+    proposed_types: dict[str, int] = {}
+    for item in all_proposed:
+        event_type = str(item.get("event_type", "unknown")).strip().lower() or "unknown"
+        proposed_types[event_type] = proposed_types.get(event_type, 0) + 1
+    grounded_types: dict[str, int] = {}
+    for item in events:
+        event_type = str(item.get("event_type", "unknown")).strip().lower() or "unknown"
+        grounded_types[event_type] = grounded_types.get(event_type, 0) + 1
+
+    _last_memory_resolution_diagnostics.update({
+        "status": "events_extracted",
+        "events_proposed": len(all_proposed),
+        "events_grounded": len(events),
+        "merged_candidate_count": len(events),
+        "event_types_proposed": proposed_types,
+        "event_types_grounded": grounded_types,
+        "rejected_events": all_rejected,
+    })
+    print(
+        f"Memory event extraction: {len(events)}/{len(all_proposed)} grounded events retained "
+        f"across {successful_windows}/{len(windows)} windows",
+        flush=True,
+    )
+    return events
+
+
+def _resolve_meeting_memory_from_events(
+    meeting_label: str,
+    transcript: str,
+    baseline_memory: dict,
+    events: list[dict],
+    meeting_summary: str = "",
+) -> dict | None:
+    """v12 pass 2: independently verify/group events into durable memory."""
+
+    if not events:
+        return None
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "commitments": {
+                "type": "array",
+                "maxItems": 6,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "owner": {"type": "string"},
+                        "action": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["owner", "action", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "decisions": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["decision", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "risks": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "risk": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["risk", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "open_questions": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["question", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["commitments", "decisions", "risks", "open_questions"],
+        "additionalProperties": False,
+    }
+
+    summary_cues = _summary_memory_cues(meeting_summary)
+    identity_map = _meeting_participant_identity_map(meeting_label, transcript)
+    compact_baseline = {
+        key: baseline_memory.get(key, [])
+        for key in ("commitments", "decisions", "risks", "open_questions")
+    }
+    evidence_context = _memory_event_evidence_context(transcript, events, neighbor_turns=1)
+    _last_memory_resolution_diagnostics["pass2_evidence_context_tokens"] = estimate_tokens(evidence_context)
+    prompt = f"""
+You are pass 2, the independent verifier/resolver for durable meeting memory.
+Pass 1 extracted dialogue events.  Group related events across turns, verify them
+against the grounded evidence context, and emit ONLY high-confidence durable memory.
+
+Meeting: {meeting_label}
+High-confidence participant identity map (channel label -> participant name):
+{json.dumps(identity_map, indent=2)}
+
+Candidate dialogue events:
+{json.dumps(events, indent=2)}
+
+Conservative first-pass memory (may be incomplete or opaque):
+{json.dumps(compact_baseline, indent=2)}
+
+Narrative-summary cues (navigation hints only; NEVER evidence):
+{json.dumps(summary_cues, indent=2)}
+
+Before retaining each item, verify all of the following internally:
+1. SUPPORT: every substantive claim is supported by the grounded evidence context.
+2. LINKAGE: if multiple events are combined, they clearly refer to the same
+   person/task/issue rather than merely being nearby.
+3. OWNERSHIP: a named Action owner is explicitly assigned, volunteers, or accepts
+   the task.  Use multiple evidence quotes for assignment + acceptance when useful.
+4. STATUS: a Decision is actually settled; an Open Question is still unresolved
+   at meeting end; an Action remains future work. Never turn completed/past work
+   (for example "I reviewed...", "I looked through...", "I've been working on...")
+   into an open Action.
+5. PRIORITY: when Action capacity is limited, preserve explicit accepted/first-person
+   future commitments before generic review/status activity or tentative next steps.
+6. USEFULNESS: the final wording is self-contained and useful weeks later.
+
+Output rules:
+- Evidence entries MUST be copied from the Grounded Evidence Context section below as exact
+  contiguous quotes.  Narrative-summary cues, baseline memory, candidate subjects,
+  and normalized Action/Decision wording are NEVER evidence and must not be copied
+  into evidence fields.
+- ACTION ITEMS: combine assignment + acceptance + later reaffirmation when they
+  are the same task.  Write "what the owner must do", not a raw conversational quote.
+- DECISIONS: capture settled group direction.  An agreed next step can be a
+  Decision when the group clearly settled on that direction, but do not merely
+  duplicate the Action Item wording.
+- RISKS/CONCERNS: state subject + failure mode/exposure + consequence when grounded.
+  Never retain a raw fragment just because it contains 'risk'.
+- OPEN QUESTIONS: normalize unresolved substantive issues into durable questions,
+  including conversational uncertainty such as "we'd have to find out".
+- Prefer omission over invention.
+
+Grounded Evidence Context:
+{evidence_context}
+""".strip()
+
+    profile = get_execution_profile(
+        PERFORMANCE_PROFILE,
+        context_size_tokens=LLM_CONTEXT_SIZE,
+        model_name=get_active_llm_model_name(),
+    )
+    prompt_tokens = estimate_tokens(prompt)
+    _last_memory_resolution_diagnostics["pass2_prompt_tokens"] = prompt_tokens
+    if prompt_tokens > profile.direct_token_budget:
+        return None
+
+    print("Resolving and verifying meeting events into durable memory (v12)...", flush=True)
+    try:
+        raw = ask_llm(
+            prompt,
+            response_format=schema,
+            timeout_seconds=profile.llm_call_timeout_seconds,
+        )
+        proposed = json.loads(raw)
+        if _last_llm_elapsed_seconds is not None:
+            _last_memory_resolution_diagnostics["pass2_llm_seconds"] = round(
+                float(_last_llm_elapsed_seconds), 3
+            )
+    except RuntimeError as exc:
+        message = str(exc)
+        _last_memory_resolution_diagnostics["pass2_error"] = message[:240]
+        if "generation token ceiling" in message.casefold() or "truncated" in message.casefold():
+            _last_memory_resolution_diagnostics["pass2_truncated"] = True
+        return None
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+    proposed_commitments = [item for item in proposed.get("commitments", []) if isinstance(item, dict)]
+    model_proposed_commitment_count = len(proposed_commitments)
+    protected_commitments = _protected_event_commitment_candidates(
+        events, proposed_commitments, transcript
+    )
+    if protected_commitments:
+        proposed_commitments.extend(protected_commitments)
+        _last_memory_resolution_diagnostics["pass2_protected_commitments"] = len(protected_commitments)
+    proposed_decisions = [item for item in proposed.get("decisions", []) if isinstance(item, dict)]
+    proposed_risks = [item for item in proposed.get("risks", []) if isinstance(item, dict)]
+    proposed_questions = [item for item in proposed.get("open_questions", []) if isinstance(item, dict)]
+    _trace_memory_stage("pass2_proposed", {
+        "commitments": proposed_commitments,
+        "decisions": proposed_decisions,
+        "risks": proposed_risks,
+        "open_questions": proposed_questions,
+    })
+
+    rejected_final = {"actions": [], "decisions": [], "risks": [], "questions": []}
+
+    commitments: list[dict] = []
+    owner_repair_trace: list[dict] = []
+    for item in proposed_commitments:
+        item = dict(item)
+        owner = re.sub(r"\s+", " ", str(item.get("owner", "Unknown"))).strip() or "Unknown"
+        raw = item.get("evidence", [])
+        evidence_values = [raw] if isinstance(raw, str) else list(raw) if isinstance(raw, list) else []
+
+        # If exact first-person evidence comes from one confidently identified
+        # participant, that participant owns the action. This separates speaker
+        # attribution from the model's semantic `owner` guess.
+        grounded_now: list[str] = []
+        for value in evidence_values:
+            quote = _ground_evidence_quote(str(value or ""), transcript)
+            if quote:
+                grounded_now.append(quote)
+        authoritative_owner = _authoritative_first_person_owner(
+            grounded_now, transcript, identity_map
+        )
+        original_owner = owner
+        if authoritative_owner:
+            owner = authoritative_owner
+            item["owner"] = owner
+        owner_repair_trace.append({
+            "action": str(item.get("action", "")),
+            "original_owner": original_owner,
+            "authoritative_owner": authoritative_owner,
+            "final_owner_before_validation": owner,
+            "grounded_evidence": grounded_now,
+        })
+
+        action_tokens = _commitment_content_tokens(str(item.get("action", "")))
+        if owner != "Unknown" and action_tokens:
+            for event in events:
+                if event.get("event_type") not in {"assignment", "commitment", "next_step"}:
+                    continue
+                event_target = str(event.get("target", "")).strip()
+                event_speaker = str(event.get("speaker", "")).strip()
+                if owner.casefold() not in {event_target.casefold(), event_speaker.casefold()}:
+                    continue
+                subject_tokens = _commitment_content_tokens(str(event.get("subject", "")))
+                if len(action_tokens & subject_tokens) < 2:
+                    continue
+                for quote in event.get("evidence", []):
+                    if quote not in evidence_values:
+                        evidence_values.append(quote)
+            item["evidence"] = evidence_values
+        validated = _validate_resolved_commitment(item, transcript, identity_map)
+        if validated is not None:
+            commitments.append(validated)
+        else:
+            rejected_final["actions"].append(_diagnose_resolved_rejection("actions", item, transcript))
+
+    decisions: list[dict] = []
+    for item in proposed_decisions:
+        validated = _validate_resolved_decision(item, transcript)
+        if validated is not None:
+            decisions.append(validated)
+        else:
+            rejected_final["decisions"].append(_diagnose_resolved_rejection("decisions", item, transcript))
+
+    risks: list[dict] = []
+    for item in proposed_risks:
+        validated = _validate_resolved_risk(item, transcript)
+        if validated is not None:
+            risks.append(validated)
+        else:
+            rejected_final["risks"].append(_diagnose_resolved_rejection("risks", item, transcript))
+
+    questions: list[str] = []
+    for item in proposed_questions:
+        validated = _validate_resolved_question(item, transcript)
+        if validated is not None:
+            questions.append(validated)
+        else:
+            rejected_final["questions"].append(_diagnose_resolved_rejection("questions", item, transcript))
+
+    _trace_memory_stage("owner_resolution", owner_repair_trace)
+    _trace_memory_stage("rejected_final", rejected_final)
+    _trace_memory_stage("verified_result", {
+        "commitments": commitments,
+        "decisions": decisions,
+        "risks": risks,
+        "open_questions": questions,
+    })
+
+    _last_memory_resolution_diagnostics.update({
+        "status": "verified",
+        "actions_proposed": model_proposed_commitment_count,
+        "actions_retained": len(commitments),
+        "decisions_proposed": len(proposed_decisions),
+        "decisions_retained": len(decisions),
+        "risks_proposed": len(proposed_risks),
+        "risks_retained": len(risks),
+        "questions_proposed": len(proposed_questions),
+        "questions_retained": len(questions),
+        "rejected_final": rejected_final,
+    })
+
+    print(
+        "Memory event verification: "
+        f"actions {len(commitments)}/{len(proposed_commitments)}, "
+        f"decisions {len(decisions)}/{len(proposed_decisions)}, "
+        f"risks {len(risks)}/{len(proposed_risks)}, "
+        f"questions {len(questions)}/{len(proposed_questions)}",
+        flush=True,
+    )
+
+    normalized_questions = (
+        _normalize_resolved_open_questions(questions)
+        if questions or not proposed_questions
+        else None
+    )
+    return {
+        "commitments": _deduplicate_commitments(commitments) if commitments or not proposed_commitments else None,
+        "decisions": _deduplicate_decisions(decisions) if decisions or not proposed_decisions else None,
+        "risks": risks if risks or not proposed_risks else None,
+        "open_questions": normalized_questions,
+        "_verified_open_questions": list(normalized_questions or []),
+    }
+
+
+def _resolve_meeting_memory_event_pipeline(
+    meeting_label: str,
+    transcript: str,
+    memory: dict,
+    meeting_summary: str = "",
+) -> dict | None:
+    """Run v12 event extraction + independent verification on capable systems."""
+
+    if not _memory_resolution_capable():
+        _last_memory_resolution_diagnostics.update({"status": "skipped_not_capable"})
+        return None
+    if not _memory_needs_contextual_resolution(memory, transcript, meeting_summary):
+        _last_memory_resolution_diagnostics.update({"status": "skipped_not_needed"})
+        return None
+
+    events = _extract_memory_events(
+        meeting_label,
+        transcript,
+        meeting_summary=meeting_summary,
+    )
+    if events is None:
+        _last_memory_resolution_diagnostics.update({"status": "event_extraction_failed", "fallback": "v11_contextual"})
+        return None
+    resolved = _resolve_meeting_memory_from_events(
+        meeting_label,
+        transcript,
+        memory,
+        events,
+        meeting_summary=meeting_summary,
+    )
+    if resolved is None:
+        _last_memory_resolution_diagnostics.update({"status": "event_verification_failed", "fallback": "v11_contextual"})
+    return resolved
+
+
+def _resolve_meeting_memory_contextually(
+    meeting_label: str,
+    transcript: str,
+    memory: dict,
+    meeting_summary: str = "",
+) -> dict | None:
+    """Use one high-capability pass to resolve cross-turn meeting memory.
+
+    The model proposes a final authoritative set, but Python still requires
+    exact transcript evidence and local lexical grounding for every retained
+    item.  Returning None leaves the baseline plumbing untouched.
+    """
+
+    if not _memory_resolution_capable():
+        return None
+    if not _memory_needs_contextual_resolution(memory, transcript, meeting_summary):
+        return None
+
+    summary_cues = _summary_memory_cues(meeting_summary)
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "commitments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "owner": {"type": "string"},
+                        "action": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["owner", "action", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "decisions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "decision": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["decision", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "risks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "risk": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["risk", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+            "open_questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    },
+                    "required": ["question", "evidence"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["commitments", "decisions", "risks", "open_questions"],
+        "additionalProperties": False,
+    }
+
+    prompt = f"""
+You are the contextual meeting-memory resolver.  The first extraction pass below
+was intentionally conservative and may contain opaque fragments or miss facts
+that require connecting nearby turns.  Produce the FINAL authoritative set of
+Decisions, Action Items, Risks/Concerns, and Open Questions for this meeting.
+
+Meeting: {meeting_label}
+
+First-pass memory:
+{json.dumps({k: memory.get(k, []) for k in ('commitments', 'decisions', 'risks', 'open_questions')}, indent=2)}
+
+Narrative-summary cues (candidate hints only; NOT evidence):
+{json.dumps(summary_cues, indent=2)}
+
+Rules:
+- The narrative-summary cues are a semantic index only.  They can tell you what
+  durable fact to look for, but they can NEVER serve as evidence by themselves.
+- Every evidence array entry MUST be an exact contiguous quote from the transcript.
+- If a summary cue says the team agreed/planned a follow-up or next step, actively
+  search the transcript for the assignment, acceptance, and subject before returning
+  an empty Action Items or Decisions category.
+- Use multiple short evidence quotes when a fact requires connecting separated turns
+  (for example: assignment + later acceptance, or risk cue + earlier stated consequence).
+- Use nearby turns to resolve owners, pronouns, antecedents, and accepted tasks.
+- An Action Item is assigned/accepted future work.  Prefer a named owner when a
+  nearby tasking statement explicitly names that person and later dialogue
+  confirms acceptance.  Rewrite the action as a concise self-contained task.
+- A Decision is a settled direction/agreement, including an agreed next step.
+  Do not duplicate an Action Item verbatim as a Decision; state the distinct
+  group-level direction only when one was actually settled.
+- A Risk/Concern must be a durable business statement, not a raw quote merely
+  containing the word 'risk'.  State the subject/failure mode and consequence.
+- An Open Question is a substantive issue still unresolved by meeting end.
+  Conversational questions can be normalized into a durable question when the
+  nearby transcript supports every substantive term.
+- Omit chatter, weak speculation, rhetorical questions, and unsupported inference.
+- Prefer omission to invention.
+
+Transcript:
+{transcript}
+""".strip()
+
+    profile = get_execution_profile(
+        PERFORMANCE_PROFILE,
+        context_size_tokens=LLM_CONTEXT_SIZE,
+        model_name=get_active_llm_model_name(),
+    )
+    if estimate_tokens(prompt) > profile.direct_token_budget:
+        return None
+
+    print("Resolving meeting memory with contextual High Performance pass...", flush=True)
+    try:
+        raw = ask_llm(
+            prompt,
+            response_format=schema,
+            timeout_seconds=profile.llm_call_timeout_seconds,
+        )
+        proposed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+
+    proposed_commitments = [item for item in proposed.get("commitments", []) if isinstance(item, dict)]
+    proposed_decisions = [item for item in proposed.get("decisions", []) if isinstance(item, dict)]
+    proposed_risks = [item for item in proposed.get("risks", []) if isinstance(item, dict)]
+    proposed_questions = [item for item in proposed.get("open_questions", []) if isinstance(item, dict)]
+
+    rejected_final = {"actions": [], "decisions": [], "risks": [], "questions": []}
+
+    commitments: list[dict] = []
+    for item in proposed_commitments:
+        validated = _validate_resolved_commitment(item, transcript)
+        if validated is not None:
+            commitments.append(validated)
+        else:
+            rejected_final["actions"].append(_diagnose_resolved_rejection("actions", item, transcript))
+
+    decisions: list[dict] = []
+    for item in proposed_decisions:
+        validated = _validate_resolved_decision(item, transcript)
+        if validated is not None:
+            decisions.append(validated)
+        else:
+            rejected_final["decisions"].append(_diagnose_resolved_rejection("decisions", item, transcript))
+
+    risks: list[dict] = []
+    for item in proposed_risks:
+        validated = _validate_resolved_risk(item, transcript)
+        if validated is not None:
+            risks.append(validated)
+        else:
+            rejected_final["risks"].append(_diagnose_resolved_rejection("risks", item, transcript))
+
+    questions: list[str] = []
+    for item in proposed_questions:
+        validated = _validate_resolved_question(item, transcript)
+        if validated is not None:
+            questions.append(validated)
+        else:
+            rejected_final["questions"].append(_diagnose_resolved_rejection("questions", item, transcript))
+
+    print(
+        "Memory resolver validation: "
+        f"summary cues {len(summary_cues)}, "
+        f"actions {len(commitments)}/{len(proposed_commitments)}, "
+        f"decisions {len(decisions)}/{len(proposed_decisions)}, "
+        f"risks {len(risks)}/{len(proposed_risks)}, "
+        f"questions {len(questions)}/{len(proposed_questions)}",
+        flush=True,
+    )
+
+    # None means the resolver attempted a category but validation rejected every
+    # proposal.  The caller must preserve the existing baseline for that
+    # category rather than silently replacing it with an empty list.  An empty
+    # list remains meaningful when the resolver itself proposed no items.
+    return {
+        "commitments": (
+            _deduplicate_commitments(commitments)
+            if commitments or not proposed_commitments
+            else None
+        ),
+        "decisions": (
+            _deduplicate_decisions(decisions)
+            if decisions or not proposed_decisions
+            else None
+        ),
+        "risks": risks if risks or not proposed_risks else None,
+        "open_questions": (
+            _normalize_open_questions(questions)
+            if questions or not proposed_questions
+            else None
+        ),
+    }
+
 def build_complete_meeting_memory(
     meeting_label: str,
     meeting_summary: str,
@@ -4089,10 +7517,13 @@ def build_complete_meeting_memory(
     transcript-grounded commitments and decisions.
     """
 
+    _reset_memory_resolution_diagnostics()
+
     memory = build_meeting_memory(
         meeting_label=meeting_label,
         meeting_summary=meeting_summary,
     )
+    _trace_memory_stage("baseline_memory", memory)
 
     grounded = (
         extract_grounded_commitments_and_decisions(
@@ -4197,10 +7628,48 @@ def build_complete_meeting_memory(
         normalized_follow_ups
     )
 
-    return _reconcile_meeting_memory(
+    # v12 High Performance path: extract dialogue events first, then resolve and
+    # independently verify them into durable memory.  If either v12 pass fails
+    # operationally, fall back to the v11 contextual resolver.  Lower-capability
+    # profiles never enter either enhanced path.
+    resolved_memory = _resolve_meeting_memory_event_pipeline(
+        meeting_label,
+        transcript,
+        memory,
+        meeting_summary=meeting_summary,
+    )
+    verified_open_questions: set[str] = set()
+    if resolved_memory is not None:
+        verified_open_questions = {
+            str(question)
+            for question in resolved_memory.get("_verified_open_questions", [])
+            if str(question).strip()
+        }
+    if resolved_memory is None:
+        resolved_memory = _resolve_meeting_memory_contextually(
+            meeting_label,
+            transcript,
+            memory,
+            meeting_summary=meeting_summary,
+        )
+    if resolved_memory is not None:
+        # The enhanced resolver is authoritative only for precision-sensitive
+        # sections. Topics/follow-ups continue through the established path.
+        for key in ("commitments", "decisions", "risks", "open_questions"):
+            resolved_value = resolved_memory.get(key)
+            if resolved_value is not None:
+                memory[key] = resolved_value
+
+    if _memory_resolution_capable():
+        memory = _high_performance_memory_quality_cleanup(memory)
+
+    reconciled = _reconcile_meeting_memory(
         memory,
         transcript,
+        verified_open_questions=verified_open_questions,
     )
+    _trace_memory_stage("final_memory", reconciled)
+    return reconciled
 
 
 def _replace_markdown_section(

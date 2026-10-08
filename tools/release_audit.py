@@ -39,6 +39,8 @@ EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 USER_PATH_RE = re.compile(r"/Users/[A-Za-z0-9._-]+(?:/[^\s'\"`<>]*)?")
 CREATED_BY_RE = re.compile(r"Created by\s+[A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)+\s+on\s+", re.I)
 BUNDLE_ID_RE = re.compile(r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*"?([A-Za-z0-9._-]+)"?;')
+DEVELOPMENT_TEAM_RE = re.compile(r'DEVELOPMENT_TEAM\s*=\s*"?([A-Za-z0-9._-]+)"?;')
+PROVISIONING_PROFILE_RE = re.compile(r'PROVISIONING_PROFILE_SPECIFIER\s*=\s*"?([^";]+)"?;')
 
 
 @dataclass(frozen=True)
@@ -134,6 +136,16 @@ def audit_text(path: Path, config: dict) -> list[Finding]:
             bundle_id = match.group(1)
             if prefixes and not bundle_id.startswith(prefixes):
                 findings.append(Finding("WARN", "bundle-identifier-review", rel, lineno, f"review bundle identifier {bundle_id!r} before public release"))
+
+        for match in DEVELOPMENT_TEAM_RE.finditer(line):
+            team_id = match.group(1).strip()
+            if team_id:
+                findings.append(Finding("WARN", "xcode-development-team", rel, lineno, "non-empty Xcode DEVELOPMENT_TEAM identifier should be stripped from public release"))
+
+        for match in PROVISIONING_PROFILE_RE.finditer(line):
+            profile = match.group(1).strip()
+            if profile:
+                findings.append(Finding("WARN", "xcode-provisioning-profile", rel, lineno, "Xcode provisioning profile metadata should be stripped from public release"))
 
     return findings
 

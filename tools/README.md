@@ -1103,3 +1103,91 @@ tools/mt repair --apply
 6. **Keep local identity/business configuration outside public source.**
 7. **Review public diffs before commit and push.**
 8. **Prefer `tools/mt` for routine work; invoke lower-level scripts directly when debugging or performing specialized maintenance.**
+
+---
+
+# Private memory benchmark harness
+
+`tools/benchmark/memory_benchmark.py` replays cleaned meeting artifacts through the
+current meeting-memory pipeline without rerunning Whisper or the GUI. It is intended
+to make memory-quality changes measurable before they are promoted into production.
+
+Private benchmark inputs and generated results are intentionally excluded from Git:
+
+```text
+private_benchmarks/
+benchmark_runs/
+```
+
+Do not place real meeting transcripts, participant names, suppliers, projects, or
+other private meeting content in tracked tests, fixtures, docs, examples, or release
+artifacts. The committed unit tests for the harness use sanitized examples only.
+
+## Create a private case from an existing meeting run
+
+From the repository root:
+
+```bash
+python tools/benchmark/memory_benchmark.py init \
+  --source /path/to/existing/meeting/run \
+  --case my-private-case
+```
+
+This copies only:
+
+```text
+meeting_metadata.json
+meeting_summary.md
+meeting_transcript_cleaned.md
+```
+
+into `private_benchmarks/my-private-case/` and creates an editable
+`expected_memory.json` gold file. Audio and Whisper output are not copied or rerun.
+
+Edit the gold file so it contains only the durable memory that a human reviewer
+expects the meeting to retain. Each expected item can match on owner plus required,
+alternative, excluded, or regex text terms. Empty expected categories mean any
+prediction in that category counts as a false positive.
+
+## Run one private case
+
+```bash
+python tools/benchmark/memory_benchmark.py run --case my-private-case
+```
+
+Run the full local corpus:
+
+```bash
+python tools/benchmark/memory_benchmark.py run --all
+```
+
+Each run writes a timestamped local result folder under `benchmark_runs/` containing:
+
+```text
+actual_memory.json
+memory_trace.json
+processing_diagnostics.json
+benchmark_result.json
+benchmark_report.md
+```
+
+`memory_trace.json` captures the memory pipeline stages only while the benchmark is
+running: per-window proposals and grounded events, merged events, the participant
+identity map, pass-2 proposals, owner-resolution state, final validator rejections,
+verified results, and final reconciled memory. Normal app processing leaves this
+trace disabled and does not retain the extra meeting content.
+
+The benchmark reports per-category precision and recall for Actions, Decisions,
+Risks, and Open Questions. The default gold template requires 100% precision and
+100% recall; thresholds may be relaxed explicitly in a private case when needed.
+Channel labels such as `Remote` and `Mic` can also be listed as forbidden owners.
+
+## Score an already-generated memory file without calling the LLM
+
+```bash
+python tools/benchmark/memory_benchmark.py score \
+  --actual /path/to/meeting_memory.json \
+  --expected private_benchmarks/my-private-case/expected_memory.json
+```
+
+This is useful when tuning the gold file or reviewing an archived result.

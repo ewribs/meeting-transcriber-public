@@ -28,3 +28,7 @@ known_people.local.json
 identity.local.json
 business_context.local.json
 release_audit.local.json
+
+# Private local memory benchmark corpus/results
+private_benchmarks/
+benchmark_runs/

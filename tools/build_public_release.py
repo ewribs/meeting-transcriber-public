@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PBXPROJ = Path("swift/Meeting Transcriber/Meeting Transcriber.xcodeproj/project.pbxproj")
 PRIVATE_AUDIT_DOC = Path("docs/PUBLIC_RELEASE_AUDIT.md")
 BUNDLE_RE = re.compile(r'(PRODUCT_BUNDLE_IDENTIFIER\s*=\s*")([^"]+)(";)')
+DEVELOPMENT_TEAM_RE = re.compile(r'(DEVELOPMENT_TEAM\s*=\s*)([^;]*)(;)')
+PROVISIONING_PROFILE_RE = re.compile(r'(PROVISIONING_PROFILE_SPECIFIER\s*=\s*)([^;]*)(;)')
 
 PRIVATE_STATE_FILES = (
     "identity.local.json",
@@ -74,6 +76,18 @@ def rewrite_bundle_ids(tree: Path, prefix: str) -> None:
         lambda m: f"{m.group(1)}{public_bundle_id(m.group(2), prefix)}{m.group(3)}",
         text,
     )
+    path.write_text(text)
+
+
+def scrub_xcode_signing_metadata(tree: Path) -> None:
+    """Remove developer-account identifiers from the exported Xcode project."""
+
+    path = tree / PBXPROJ
+    if not path.exists():
+        return
+    text = path.read_text()
+    text = DEVELOPMENT_TEAM_RE.sub(lambda m: f'{m.group(1)}""{m.group(3)}', text)
+    text = PROVISIONING_PROFILE_RE.sub(lambda m: f'{m.group(1)}""{m.group(3)}', text)
     path.write_text(text)
 
 
@@ -203,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
 
         remove_private_release_state(tree)
         rewrite_bundle_ids(tree, args.bundle_prefix)
+        scrub_xcode_signing_metadata(tree)
         run_export_release_audit(tree, args.bundle_prefix)
 
         output = args.output.expanduser().resolve()
