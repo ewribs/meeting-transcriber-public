@@ -203,6 +203,58 @@ def audit(root: Path = ROOT, config_path: Path = LOCAL_CONFIG) -> list[Finding]:
     return findings
 
 
+def scan_history(repo: Path, config_path: Path) -> int:
+    """Scan every file version and commit message in a repo's whole history for private terms."""
+    config = load_private_config(config_path)
+    matcher = _build_matcher(load_derived_terms(config_path, ROOT))
+    literals = [x.casefold() for x in config["sensitive_literals"]]
+    try:
+        allowed_paths = set(json.loads(Path(config_path).read_text()).get("derived_allow_paths", []))
+    except Exception:
+        allowed_paths = set()
+
+    def hit_in(text: str):
+        if matcher is not None:
+            found = _find_term(matcher, text)
+            if found:
+                return found
+        folded = text.casefold()
+        return next((lit for lit in literals if lit in folded), None)
+
+    def git(*args: str) -> bytes:
+        return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.DEVNULL)
+
+    commits = git("rev-list", "--all").decode().split()
+    problems = 0
+    for sha in commits:
+        message = git("show", "-s", "--format=%B", sha).decode(errors="ignore")
+        found = hit_in(message)
+        if found:
+            problems += 1
+            print(f"commit {sha[:8]} message: contains {found!r}")
+    seen: set[str] = set()
+    for line in git("rev-list", "--all", "--objects").decode(errors="ignore").splitlines():
+        blob, _, name = line.partition(" ")
+        if not name or blob in seen:
+            continue
+        seen.add(blob)
+        if git("cat-file", "-t", blob).strip() != b"blob":
+            continue
+        size = int(git("cat-file", "-s", blob))
+        if name in allowed_paths:
+            continue  # e.g. LICENSE, which is allowed to carry the owner's name
+        found = hit_in(name)
+        if not found and size <= 2_000_000:
+            data = git("cat-file", "-p", blob)
+            if b"\0" not in data[:4096]:
+                found = hit_in(data.decode("utf-8", errors="ignore"))
+        if found:
+            problems += 1
+            print(f"{name}: a past version contains {found!r}")
+    print(f"History scan: {len(commits)} commit(s), {len(seen)} distinct file version(s), {problems} problem(s).")
+    return 1 if problems else 0
+
+
 def derived_report(root: Path, config_path: Path) -> int:
     """Show every derived term with the tracked files it appears in, for triage."""
     terms = sorted(load_derived_terms(config_path, root))
@@ -233,10 +285,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Audit tracked files for public-release privacy risks.")
     parser.add_argument("--config", type=Path, default=LOCAL_CONFIG, help="private local denylist/config JSON")
     parser.add_argument("--strict-warnings", action="store_true", help="treat warnings as failures")
+    parser.add_argument("--scan-history", type=Path, metavar="REPO",
+                        help="scan a git repo's entire history for private terms (use on the public repo)")
     parser.add_argument("--derived-report", action="store_true",
                         help="list terms taken from meeting/file names and where each one appears (no failure)")
     args = parser.parse_args(argv)
 
+    if args.scan_history:
+        return scan_history(args.scan_history.expanduser(), args.config)
     if args.derived_report:
         return derived_report(ROOT, args.config)
 
