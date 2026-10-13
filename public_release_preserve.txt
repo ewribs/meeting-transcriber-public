@@ -1,0 +1,4 @@
+# Files/directories owned by the public repository.
+# These survive --delete synchronization from the sanitized private export.
+
+.github/
