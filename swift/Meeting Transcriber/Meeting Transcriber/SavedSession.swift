@@ -9,6 +9,7 @@ nonisolated struct SavedSession: Identifiable, Decodable, Sendable {
     let meetingCount: Int
     let turnCount: Int
     let criteria: [String]
+    let meetingRuns: [String]?
     let path: String
 
     enum CodingKeys: String, CodingKey {
@@ -20,6 +21,7 @@ nonisolated struct SavedSession: Identifiable, Decodable, Sendable {
         case meetingCount = "meeting_count"
         case turnCount = "turn_count"
         case criteria
+        case meetingRuns = "meeting_runs"
         case path
     }
 
@@ -108,6 +110,10 @@ nonisolated struct DynamicSessionEditorResponse: Decodable, Sendable {
     let historyOptions: [String]
     let selectedHistoryLabel: String
     let customRangeLabel: String?
+    let people: [String]?
+    let status: String?
+    let excludeTitle: String?
+    let excludeTopic: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
@@ -116,6 +122,10 @@ nonisolated struct DynamicSessionEditorResponse: Decodable, Sendable {
         case person
         case title
         case topic
+        case people
+        case status
+        case excludeTitle = "exclude_title"
+        case excludeTopic = "exclude_topic"
         case historyOptions = "history_options"
         case selectedHistoryLabel =
             "selected_history_label"
@@ -261,5 +271,53 @@ nonisolated struct SessionChangesResponse:
             "current_latest_run"
         case currentLatestLabel =
             "current_latest_label"
+    }
+}
+
+
+nonisolated struct SessionMembershipResponse: Decodable, Sendable {
+    let schemaVersion: Int
+    let sessionName: String
+    let result: String
+    let added: Int
+    let removed: Int
+    let unchanged: Int
+    let meetingCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case sessionName = "session_name"
+        case result
+        case added
+        case removed
+        case unchanged
+        case meetingCount = "meeting_count"
+    }
+
+    var isAlreadyCurrent: Bool {
+        result == "already_current"
+    }
+}
+
+
+nonisolated struct CriteriaPreviewMeeting: Identifiable, Decodable, Sendable {
+    let run: String
+    let title: String
+    let participants: [String]
+
+    var id: String { run }
+}
+
+nonisolated struct CriteriaPreviewResponse: Decodable, Sendable {
+    let schemaVersion: Int
+    let matchCount: Int
+    let hasCriteria: Bool
+    let meetings: [CriteriaPreviewMeeting]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case matchCount = "match_count"
+        case hasCriteria = "has_criteria"
+        case meetings
     }
 }

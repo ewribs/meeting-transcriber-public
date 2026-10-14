@@ -165,7 +165,7 @@ struct SearchView: View {
                         }
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.inset)
             }
         }
     }

@@ -52,6 +52,18 @@ final class MeetingContextController:
     var statusFilterRawValue =
         "All statuses"
 
+    @Published
+    var sessionFilterName = ""
+
+    @Published
+    var showRecentOnly = false
+
+    @Published
+    var folderFilterName = ""
+
+    @Published
+    var showUnfiledOnly = false
+
     private let backend =
         BackendService()
 

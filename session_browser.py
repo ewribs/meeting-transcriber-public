@@ -110,6 +110,22 @@ def format_session_criteria(
     if topic:
         lines.append(f"Topic contains: {topic}")
 
+    people = selection_criteria.get("people")
+    if people:
+        lines.append("Person is any of: " + ", ".join(people))
+
+    status = selection_criteria.get("status")
+    if status:
+        lines.append(f"Status: {status}")
+
+    exclude_title = selection_criteria.get("exclude_title")
+    if exclude_title:
+        lines.append(f"Title does not contain: {exclude_title}")
+
+    exclude_topic = selection_criteria.get("exclude_topic")
+    if exclude_topic:
+        lines.append(f"Topic does not contain: {exclude_topic}")
+
     history_days = selection_criteria.get("history_days")
     if history_days:
         lines.append(f"Window: Last {history_days} days")

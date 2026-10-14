@@ -10,7 +10,7 @@ HISTORY_OPTIONS = (
     "Last 180 days",
     "All history",
 )
-DEFAULT_HISTORY_LABEL = "Last 90 days"
+DEFAULT_HISTORY_LABEL = "All history"
 
 _HISTORY_DAYS_BY_LABEL = {
     "Last 30 days": 30,
@@ -136,10 +136,15 @@ def criteria_present(criteria: Mapping[str, Any]) -> bool:
         criteria.get(key)
         for key in (
             "person",
+            "people",
             "title",
             "topic",
+            "status",
+            "exclude_title",
+            "exclude_topic",
             "history_days",
             "start_date",
             "end_date",
         )
     )
+

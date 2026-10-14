@@ -122,20 +122,26 @@ struct TranscribeView: View {
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                        if recordingController.isFinalizing {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text(
+                                    recordingController.finalizingCount == 1
+                                        ? "Finishing the last recording in the background…"
+                                        : "Finishing \(recordingController.finalizingCount) recordings in the background…"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
                 Spacer()
 
-                if recordingController.isFinalizing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Finalizing…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if recordingController.isRecording {
+                if recordingController.isRecording {
                     HStack(spacing: 10) {
                         HStack(spacing: 7) {
                             Circle()
@@ -152,10 +158,8 @@ struct TranscribeView: View {
                         .buttonStyle(.bordered)
 
                         Button {
-                            Task {
-                                if let path = await recordingController.stopRecording() {
-                                    controller.addRecordingPaths([path])
-                                }
+                            recordingController.stopRecording { path in
+                                controller.addRecordingPaths([path])
                             }
                         } label: {
                             Label("Stop Recording", systemImage: "stop.fill")
@@ -201,10 +205,7 @@ struct TranscribeView: View {
                     text: $recordingController.meetingName
                 )
                 .textFieldStyle(.roundedBorder)
-                .disabled(
-                    recordingController.isRecording
-                    || recordingController.isFinalizing
-                )
+                .disabled(recordingController.isRecording)
             }
 
             HStack(alignment: .center, spacing: 24) {

@@ -34,9 +34,7 @@ struct SessionsView: View {
     @State private var isShowingDynamicEditor = false
     @State private var dynamicEditorMode = "create"
     @State private var dynamicSessionName = ""
-    @State private var dynamicPerson = ""
-    @State private var dynamicTitle = ""
-    @State private var dynamicTopic = ""
+    @State private var dynamicRules: [SessionRuleRow] = []
     @State private var dynamicHistoryOptions: [String] = []
     @State private var dynamicHistoryLabel = ""
     @State private var dynamicCustomRangeLabel: String?
@@ -66,6 +64,11 @@ struct SessionsView: View {
         String?
 
     @State private var pendingSessionPrompt: String?
+
+    @State private var meetingTitlesByRun: [String: String] = [:]
+    @State private var pendingRemoveRun: String?
+    @State private var isRemovingMeeting = false
+    @State private var removeMeetingError: String?
 
     private let backend = BackendService()
 
@@ -221,98 +224,14 @@ struct SessionsView: View {
 
                 Divider()
 
-                Grid(
-                    alignment: .leading,
-                    horizontalSpacing: 14,
-                    verticalSpacing: 12
-                ) {
-                    GridRow {
-                        Text("Session name")
-                            .foregroundStyle(.secondary)
-
-                        TextField(
-                            "Session name",
-                            text: $dynamicSessionName
-                        )
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(
-                            dynamicEditorMode == "edit"
-                        )
-                    }
-
-                    GridRow {
-                        Text("Person")
-                            .foregroundStyle(.secondary)
-
-                        TextField(
-                            "Any person",
-                            text: $dynamicPerson
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    GridRow {
-                        Text("Title contains")
-                            .foregroundStyle(.secondary)
-
-                        TextField(
-                            "Optional",
-                            text: $dynamicTitle
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    GridRow {
-                        Text("Topic contains")
-                            .foregroundStyle(.secondary)
-
-                        TextField(
-                            "Optional",
-                            text: $dynamicTopic
-                        )
-                        .textFieldStyle(.roundedBorder)
-                    }
-
-                    GridRow {
-                        Text("History")
-                            .foregroundStyle(.secondary)
-
-                        Picker(
-                            "History",
-                            selection: $dynamicHistoryLabel
-                        ) {
-                            ForEach(
-                                dynamicHistoryOptions,
-                                id: \.self
-                            ) { option in
-                                Text(option)
-                                    .tag(option)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(
-                            maxWidth: .infinity,
-                            alignment: .leading
-                        )
-                    }
-                }
-
-                if let dynamicCustomRangeLabel,
-                   dynamicHistoryLabel
-                    == dynamicCustomRangeLabel {
-                    Label(
-                        "This legacy saved date range will be preserved unless you choose a different history window.",
-                        systemImage: "calendar.badge.clock"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                Text(
-                    "Leave Person, Title, and Topic blank to ignore that criterion. A rolling history window can be used by itself."
+                SessionRuleEditorView(
+                    name: $dynamicSessionName,
+                    isNameEditable: dynamicEditorMode == "create",
+                    rows: $dynamicRules,
+                    historyOptions: dynamicHistoryOptions,
+                    historyLabel: $dynamicHistoryLabel,
+                    customRangeLabel: dynamicCustomRangeLabel
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
                 if let dynamicEditorErrorMessage {
                     Text(dynamicEditorErrorMessage)
@@ -365,7 +284,7 @@ struct SessionsView: View {
                 }
             }
             .padding(24)
-            .frame(width: 610)
+            .frame(width: 680)
         }
         .alert(
             "Dynamic Session",
@@ -386,6 +305,39 @@ struct SessionsView: View {
         } message: {
             Text(
                 dynamicEditorResultMessage ?? ""
+            )
+        }
+        .confirmationDialog(
+            "Remove Meeting?",
+            isPresented: Binding(
+                get: {
+                    pendingRemoveRun != nil
+                },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingRemoveRun = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(
+                "Remove from Session",
+                role: .destructive
+            ) {
+                if let run = pendingRemoveRun {
+                    Task {
+                        await removeMeeting(run)
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                pendingRemoveRun = nil
+            }
+        } message: {
+            Text(
+                "“\(displayTitle(for: pendingRemoveRun ?? ""))” will be removed from this session. The meeting itself is not deleted, and the conversation is kept."
             )
         }
         .confirmationDialog(
@@ -1322,6 +1274,10 @@ struct SessionsView: View {
                 alignment: .leading,
                 spacing: 12
             ) {
+                if !session.isDynamic {
+                    fixedMeetingsSection(detail: detail)
+                }
+
                 Text("Session Context")
                     .font(.headline)
 
@@ -1337,6 +1293,126 @@ struct SessionsView: View {
                 alignment: .leading
             )
             .padding(24)
+        }
+    }
+
+    private func displayTitle(
+        for run: String
+    ) -> String {
+        meetingTitlesByRun[run] ?? run
+    }
+
+    private func fixedMeetingsSection(
+        detail: SessionDetail
+    ) -> some View {
+        VStack(
+            alignment: .leading,
+            spacing: 8
+        ) {
+            Text("Meetings in this session")
+                .font(.headline)
+
+            ForEach(
+                detail.meetingRuns,
+                id: \.self
+            ) { run in
+                HStack(spacing: 10) {
+                    Text(displayTitle(for: run))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Button("Remove") {
+                        pendingRemoveRun = run
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(
+                        isRemovingMeeting
+                        || detail.meetingRuns.count <= 1
+                    )
+                }
+                .padding(.vertical, 2)
+
+                Divider()
+            }
+
+            if detail.meetingRuns.count <= 1 {
+                Text(
+                    "A session needs at least one meeting. Delete the session instead."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let removeMeetingError {
+                Text(removeMeetingError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.bottom, 12)
+        .task {
+            await loadMeetingTitlesIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func loadMeetingTitlesIfNeeded() async {
+        guard meetingTitlesByRun.isEmpty else {
+            return
+        }
+
+        guard let meetings =
+            try? await backend.loadMeetings()
+        else {
+            return
+        }
+
+        meetingTitlesByRun = Dictionary(
+            meetings.map {
+                ($0.run, "\($0.title) • \($0.date)")
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    @MainActor
+    private func removeMeeting(
+        _ run: String
+    ) async {
+        guard let session = selectedSession,
+              !isRemovingMeeting
+        else {
+            return
+        }
+
+        let selectedID = session.id
+
+        isRemovingMeeting = true
+        removeMeetingError = nil
+
+        defer {
+            isRemovingMeeting = false
+        }
+
+        do {
+            _ = try await backend
+                .removeMeetingsFromSession(
+                    name: session.name,
+                    meetingRuns: [run]
+                )
+
+            pendingRemoveRun = nil
+            await reloadSessions()
+            selectedSessionID = selectedID
+            await loadSelectedSessionDetail(
+                resetQueryState: false
+            )
+        } catch {
+            pendingRemoveRun = nil
+            removeMeetingError =
+                error.localizedDescription
         }
     }
 
@@ -1621,9 +1697,7 @@ struct SessionsView: View {
     ) {
         dynamicEditorMode = editor.mode
         dynamicSessionName = editor.sessionName
-        dynamicPerson = editor.person
-        dynamicTitle = editor.title
-        dynamicTopic = editor.topic
+        dynamicRules = [SessionRuleRow].rows(from: editor)
         dynamicHistoryOptions =
             editor.historyOptions
         dynamicHistoryLabel =
@@ -1653,6 +1727,8 @@ struct SessionsView: View {
         isSavingDynamicSession = true
         dynamicEditorErrorMessage = nil
 
+        let ruleArguments = dynamicRules.bridgeArguments
+
         defer {
             isSavingDynamicSession = false
         }
@@ -1664,21 +1740,23 @@ struct SessionsView: View {
                 result =
                     try await backend.createDynamicSession(
                         name: sessionName,
-                        person: dynamicPerson,
-                        title: dynamicTitle,
-                        topic: dynamicTopic,
+                        person: ruleArguments.person,
+                        title: ruleArguments.title,
+                        topic: ruleArguments.topic,
                         historyLabel:
-                            dynamicHistoryLabel
+                            dynamicHistoryLabel,
+                        rulesJSON: ruleArguments.rulesJSON
                     )
             } else {
                 result =
                     try await backend.editDynamicSession(
                         name: sessionName,
-                        person: dynamicPerson,
-                        title: dynamicTitle,
-                        topic: dynamicTopic,
+                        person: ruleArguments.person,
+                        title: ruleArguments.title,
+                        topic: ruleArguments.topic,
                         historyLabel:
-                            dynamicHistoryLabel
+                            dynamicHistoryLabel,
+                        rulesJSON: ruleArguments.rulesJSON
                     )
             }
 

@@ -2,6 +2,30 @@ import AppKit
 import SwiftUI
 
 struct PreferencesView: View {
+    @AppStorage("meetings.recentDays")
+    private var recentDays = 14
+
+    @AppStorage("meetings.sortOrder")
+    private var sortOrderRaw = "newest"
+
+    @AppStorage("meetings.showRecentRow")
+    private var showRecentRow = true
+
+    @AppStorage("meetings.showUnpublishedRow")
+    private var showUnpublishedRow = true
+
+    @AppStorage("meetings.showUnfiledRow")
+    private var showUnfiledRow = true
+
+    @AppStorage("meetings.showNotices")
+    private var showNotices = true
+
+    @AppStorage("meetings.confirmFolderDelete")
+    private var confirmFolderDelete = true
+
+    @AppStorage("ask.showFavorites")
+    private var showFavorites = true
+
     @State private var performanceProfile =
         "Auto"
 
@@ -369,6 +393,61 @@ struct PreferencesView: View {
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            }
+
+            Section("Meetings") {
+                Stepper(
+                    value: $recentDays,
+                    in: 1...365
+                ) {
+                    LabeledContent(
+                        "“Recent” covers the last"
+                    ) {
+                        Text(
+                            recentDays == 1
+                                ? "1 day"
+                                : String(recentDays) + " days"
+                        )
+                    }
+                }
+
+                Picker(
+                    "Sort meetings by",
+                    selection: $sortOrderRaw
+                ) {
+                    ForEach(MeetingSortOrder.allCases) { order in
+                        Text(order.label).tag(order.rawValue)
+                    }
+                }
+
+                Text(
+                    "The Recent window and the sort order apply immediately. The sort order can also be changed from the arrows button above the meeting list."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Section("Meetings Sidebar") {
+                Toggle("Show Recent", isOn: $showRecentRow)
+                Toggle("Show Unpublished", isOn: $showUnpublishedRow)
+                Toggle("Show Not in a Folder", isOn: $showUnfiledRow)
+            }
+
+            Section("Behavior") {
+                Toggle(
+                    "Show notices (already added, session refreshed)",
+                    isOn: $showNotices
+                )
+
+                Toggle(
+                    "Confirm before deleting a folder",
+                    isOn: $confirmFolderDelete
+                )
+
+                Toggle(
+                    "Show prompt favorites in the Ask tab",
+                    isOn: $showFavorites
+                )
             }
 
             Section("Audio Retention") {

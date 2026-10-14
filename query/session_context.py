@@ -38,6 +38,18 @@ def select_session_meetings(
         title=selection_criteria.get(
             "title"
         ),
+        people=selection_criteria.get(
+            "people"
+        ),
+        # Sessions read the archived copy of a meeting, so only published
+        # meetings can be members. A saved "status" rule is ignored.
+        status="Published",
+        exclude_title=selection_criteria.get(
+            "exclude_title"
+        ),
+        exclude_topic=selection_criteria.get(
+            "exclude_topic"
+        ),
     )
 
 

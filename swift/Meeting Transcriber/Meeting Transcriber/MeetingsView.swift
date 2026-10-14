@@ -2,19 +2,19 @@ import SwiftUI
 
 struct MeetingsView: View {
     @EnvironmentObject
-    private var meetingContextController:
+    var meetingContextController:
         MeetingContextController
 
     @EnvironmentObject
-    private var navigation: AppNavigationController
+    var navigation: AppNavigationController
 
-    private enum MeetingWorkspaceTab:
+    enum MeetingWorkspaceTab:
         String,
         CaseIterable,
         Identifiable
     {
         case meeting = "Meeting"
-        case context = "Context"
+        case context = "Ask"
 
         var id: String {
             rawValue
@@ -29,47 +29,115 @@ struct MeetingsView: View {
         var id: Self { self }
     }
 
-    @State private var meetings: [Meeting] = []
-    @State private var selectedMeetingID: Meeting.ID?
+    enum FolderSheetMode: Identifiable {
+        case create
+        case rename(String)
 
-    @State private var selectedWorkspaceTab:
+        var id: String {
+            switch self {
+            case .create:
+                return "create"
+            case .rename(let name):
+                return "rename-\(name)"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .create:
+                return "New Folder"
+            case .rename:
+                return "Rename Folder"
+            }
+        }
+
+        var buttonTitle: String {
+            switch self {
+            case .create:
+                return "Create"
+            case .rename:
+                return "Rename"
+            }
+        }
+    }
+
+    @State var meetings: [Meeting] = []
+    @State var selectedMeetingID: Meeting.ID?
+
+    @State var selectedWorkspaceTab:
         MeetingWorkspaceTab = .meeting
 
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State var isLoading = false
+    @State var errorMessage: String?
 
-    @State private var meetingDetail: MeetingDetail?
-    @State private var isLoadingDetail = false
-    @State private var detailErrorMessage: String?
+    @State var meetingDetail: MeetingDetail?
+    @State var isLoadingDetail = false
+    @State var detailErrorMessage: String?
 
-    @State private var isPublishing = false
-    @State private var showingPublishConfirmation = false
-    @State private var publishErrorMessage: String?
+    @State var isPublishing = false
+    @State var showingPublishConfirmation = false
+    @State var publishErrorMessage: String?
 
-    @State private var isDeletingMeeting = false
-    @State private var showingDeleteConfirmation = false
-    @State private var pendingDeletePlan: MeetingDeletePlanResponse?
-    @State private var deleteErrorMessage: String?
-    @State private var transcriptionQueueCleanupRequest:
+    @State var isDeletingMeeting = false
+    @State var showingDeleteConfirmation = false
+    @State var pendingDeletePlan: MeetingDeletePlanResponse?
+    @State var deleteErrorMessage: String?
+    @State var transcriptionQueueCleanupRequest:
         MeetingTranscriptionQueueCleanupRequest?
 
-    @State private var isUnpublishing = false
-    @State private var showingUnpublishConfirmation = false
-    @State private var pendingUnpublishPlan: MeetingUnpublishPlanResponse?
-    @State private var unpublishErrorMessage: String?
-    @State private var unpublishSuccessMessage: String?
+    @State var isUnpublishing = false
+    @State var showingUnpublishConfirmation = false
+    @State var pendingUnpublishPlan: MeetingUnpublishPlanResponse?
+    @State var unpublishErrorMessage: String?
+    @State var unpublishSuccessMessage: String?
 
-    @State private var isShowingContextMeetings = false
+    @State var isShowingContextMeetings = false
 
-    @State private var isShowingSaveContextSessionSheet = false
-    @State private var saveContextSessionName = ""
-    @State private var isSavingContextSession = false
-    @State private var saveContextSessionError: String?
-    @State private var saveContextSessionResult: String?
+    @State var isShowingSaveContextSessionSheet = false
+    @State var saveContextSessionName = ""
+    @State var isSavingContextSession = false
+    @State var saveContextSessionError: String?
+    @State var saveContextSessionResult: String?
 
-    private let backend = BackendService()
+    @State var addToSessionResult: String?
+    @State var addToSessionTitle = "Couldn't Complete"
 
-    private var filteredMeetings: [Meeting] {
+    static let defaultAlertTitle = "Couldn't Complete"
+    @State var allSessions: [SavedSession] = []
+    @State var folders: [MeetingFolder] = []
+    @State var folderSheet: FolderSheetMode?
+    @State var dropTargetKey: String?
+    @AppStorage("meetings.recentDays") var recentDays = 14
+    @AppStorage("meetings.sortOrder") var sortOrderRaw = "newest"
+    @AppStorage("meetings.showRecentRow") var showRecentRow = true
+    @AppStorage("meetings.showUnpublishedRow") var showUnpublishedRow = true
+    @AppStorage("meetings.showUnfiledRow") var showUnfiledRow = true
+    @AppStorage("meetings.showNotices") var showNotices = true
+    @AppStorage("meetings.confirmFolderDelete") var confirmFolderDelete = true
+    @AppStorage("ask.showFavorites") var showFavorites = true
+    @State var dynamicEditorTarget: DynamicEditorTarget?
+    @State var pendingDeleteSession: String?
+    @State var renameSessionTarget: String?
+    @State var renameSessionText = ""
+    @State var renameSessionError: String?
+    @State var isRenamingSession = false
+    @State var folderNameText = ""
+    @State var folderErrorMessage: String?
+    @State var isSavingFolder = false
+    @State var pendingDeleteFolder: String?
+    @State var pendingFolderRuns: [String] = []
+
+    let backend = BackendService()
+
+    var sortOrder: MeetingSortOrder {
+        MeetingSortOrder(rawValue: sortOrderRaw) ?? .newest
+    }
+
+    var filteredMeetings: [Meeting] {
+        sortOrder.apply(to: matchingMeetings)
+    }
+
+    var matchingMeetings: [Meeting] {
         meetings.filter { meeting in
             let matchesStatus: Bool
 
@@ -83,6 +151,26 @@ struct MeetingsView: View {
             }
 
             guard matchesStatus else {
+                return false
+            }
+
+            if let runs = sessionFilterRuns,
+               !runs.contains(meeting.run) {
+                return false
+            }
+
+            if meetingContextController.showRecentOnly,
+               !isRecent(meeting) {
+                return false
+            }
+
+            if let runs = folderFilterRuns,
+               !runs.contains(meeting.run) {
+                return false
+            }
+
+            if meetingContextController.showUnfiledOnly,
+               filedRuns.contains(meeting.run) {
                 return false
             }
 
@@ -101,7 +189,166 @@ struct MeetingsView: View {
         }
     }
 
-    private var selectedMeeting: Meeting? {
+    /// Every meeting that is in at least one folder.
+    var filedRuns: Set<String> {
+        Set(folders.flatMap(\.meetingRuns))
+    }
+
+    static let isoDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    func isRecent(
+        _ meeting: Meeting
+    ) -> Bool {
+        guard let day = Self.isoDayFormatter.date(
+            from: String(meeting.date.prefix(10))
+        ) else {
+            return false
+        }
+
+        let limit: Double = Double(recentDays) * 86_400
+
+        return Date().timeIntervalSince(day) <= limit
+    }
+
+    enum LibrarySelection: Equatable {
+        case all
+        case recent
+        case unpublished
+        case unfiled
+        case folder(String)
+        case session(String)
+    }
+
+    var librarySelection: LibrarySelection {
+        if let folder = folderFilterFolder {
+            return .folder(folder.name)
+        }
+
+        if let session = sessionFilterSession {
+            return .session(session.name)
+        }
+
+        if meetingContextController.showRecentOnly {
+            return .recent
+        }
+
+        if meetingContextController.showUnfiledOnly {
+            return .unfiled
+        }
+
+        if statusFilter == .unpublished {
+            return .unpublished
+        }
+
+        return .all
+    }
+
+    var libraryTitle: String {
+        switch librarySelection {
+        case .all:
+            return "All Meetings"
+        case .recent:
+            return "Recent"
+        case .unpublished:
+            return "Unpublished"
+        case .unfiled:
+            return "Not in a Folder"
+        case .folder(let name):
+            return name
+        case .session(let name):
+            return name
+        }
+    }
+
+    func selectLibrary(
+        _ selection: LibrarySelection
+    ) {
+        meetingContextController.sessionFilterName = ""
+        meetingContextController.folderFilterName = ""
+        meetingContextController.showRecentOnly = false
+        meetingContextController.showUnfiledOnly = false
+        meetingContextController.statusFilterRawValue =
+            StatusFilter.all.rawValue
+
+        switch selection {
+        case .all:
+            break
+        case .recent:
+            meetingContextController.showRecentOnly = true
+        case .unpublished:
+            meetingContextController.statusFilterRawValue =
+                StatusFilter.unpublished.rawValue
+        case .unfiled:
+            meetingContextController.showUnfiledOnly = true
+        case .folder(let name):
+            meetingContextController.folderFilterName = name
+        case .session(let name):
+            meetingContextController.sessionFilterName = name
+        }
+    }
+
+    var folderFilterFolder: MeetingFolder? {
+        let name = meetingContextController
+            .folderFilterName
+
+        guard !name.isEmpty else {
+            return nil
+        }
+
+        return folders.first {
+            $0.name == name
+        }
+    }
+
+    var folderFilterRuns: Set<String>? {
+        guard let folder = folderFilterFolder else {
+            return nil
+        }
+
+        return Set(folder.meetingRuns)
+    }
+
+    var sessionFilterSession: SavedSession? {
+        let name = meetingContextController
+            .sessionFilterName
+
+        guard !name.isEmpty else {
+            return nil
+        }
+
+        return allSessions.first {
+            $0.name == name
+        }
+    }
+
+    var sessionFilterRuns: Set<String>? {
+        guard let session = sessionFilterSession else {
+            return nil
+        }
+
+        return Set(session.meetingRuns ?? [])
+    }
+
+    var sessionFilterNote: String {
+        if folderFilterFolder != nil {
+            return " in this folder"
+        }
+
+        guard let session = sessionFilterSession else {
+            return ""
+        }
+
+        return session.isDynamic
+            ? " in this session (as of its last refresh)"
+            : " in this session"
+    }
+
+    var selectedMeeting: Meeting? {
         guard let selectedMeetingID else {
             return nil
         }
@@ -111,49 +358,49 @@ struct MeetingsView: View {
         }
     }
 
-    private var contextMeetingIDs:
+    var contextMeetingIDs:
         Set<Meeting.ID>
     {
         meetingContextController
             .meetingIDs
     }
 
-    private var builtContext:
+    var builtContext:
         MeetingContextResponse?
     {
         meetingContextController
             .builtContext
     }
 
-    private var contextConversation:
+    var contextConversation:
         [SessionConversationItem]
     {
         meetingContextController
             .conversation
     }
 
-    private var isBuildingContext:
+    var isBuildingContext:
         Bool
     {
         meetingContextController
             .isBuildingContext
     }
 
-    private var isRunningContextQuery:
+    var isRunningContextQuery:
         Bool
     {
         meetingContextController
             .isRunningQuery
     }
 
-    private var contextErrorMessage:
+    var contextErrorMessage:
         String?
     {
         meetingContextController
             .errorMessage
     }
 
-    private var contextStatusMessage:
+    var contextStatusMessage:
         String?
     {
         if !isRunningContextQuery,
@@ -167,14 +414,14 @@ struct MeetingsView: View {
             .statusMessage
     }
 
-    private var searchText:
+    var searchText:
         String
     {
         meetingContextController
             .searchText
     }
 
-    private var statusFilter:
+    var statusFilter:
         StatusFilter
     {
         StatusFilter(
@@ -184,22 +431,7 @@ struct MeetingsView: View {
         ) ?? .all
     }
 
-    private var statusFilterBinding:
-        Binding<StatusFilter>
-    {
-        Binding(
-            get: {
-                statusFilter
-            },
-            set: { newValue in
-                meetingContextController
-                    .statusFilterRawValue =
-                        newValue.rawValue
-            }
-        )
-    }
-
-    private var contextMeetingRuns:
+    var contextMeetingRuns:
         [String]
     {
         meetings
@@ -211,15 +443,34 @@ struct MeetingsView: View {
             .sorted()
     }
 
-    private var contextSelectionCount:
+    var autoBuildKey: String {
+        selectedWorkspaceTab.rawValue
+            + "|"
+            + contextMeetingIDs.sorted().joined(separator: ",")
+    }
+
+    var contextSelectionCount:
         Int
     {
         contextMeetingIDs.count
     }
 
     var body: some View {
+        bodyPart4
+    }
+
+    var bodyPart1: some View {
         GeometryReader { geometry in
             HSplitView {
+                libraryRail
+                    .frame(
+                        minWidth: 170,
+                        idealWidth: 210,
+                        maxWidth: 260,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+
                 meetingListPane
                     .frame(
                         minWidth: 300,
@@ -256,6 +507,9 @@ struct MeetingsView: View {
         .task(id: selectedMeetingID) {
             await reloadSelectedMeetingDetail()
         }
+        .task(id: autoBuildKey) {
+            await autoBuildContextIfNeeded()
+        }
         .onChange(
             of: selectedMeetingID
         ) {
@@ -264,6 +518,10 @@ struct MeetingsView: View {
                     .meeting
             }
         }
+    }
+
+    var bodyPart2: some View {
+        bodyPart1
         .confirmationDialog(
             "Publish & Archive this meeting?",
             isPresented: $showingPublishConfirmation,
@@ -357,6 +615,10 @@ struct MeetingsView: View {
         } message: {
             Text(deleteErrorMessage ?? "Unknown delete error")
         }
+    }
+
+    var bodyPart3: some View {
+        bodyPart2
         .confirmationDialog(
             "Unpublish this meeting?",
             isPresented: $showingUnpublishConfirmation,
@@ -417,6 +679,126 @@ struct MeetingsView: View {
         } message: {
             Text(unpublishSuccessMessage ?? "The meeting was unpublished.")
         }
+        .sheet(item: $folderSheet) { mode in
+            VStack(
+                alignment: .leading,
+                spacing: 16
+            ) {
+                Text(mode.title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                if case .create = mode,
+                   !pendingFolderRuns.isEmpty {
+                    Text(
+                        "The \(pendingFolderRuns.count) selected meeting\(pendingFolderRuns.count == 1 ? "" : "s") will be added to it."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                TextField(
+                    "Folder name",
+                    text: $folderNameText
+                )
+                .textFieldStyle(.roundedBorder)
+
+                if let folderErrorMessage {
+                    Text(folderErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+
+                HStack {
+                    Spacer()
+
+                    Button("Cancel") {
+                        pendingFolderRuns = []
+                        folderSheet = nil
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isSavingFolder)
+
+                    Button(mode.buttonTitle) {
+                        Task {
+                            await saveFolderSheet()
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(
+                        isSavingFolder
+                        || folderNameText
+                            .trimmingCharacters(
+                                in: .whitespacesAndNewlines
+                            )
+                            .isEmpty
+                    )
+                }
+            }
+            .padding(24)
+            .frame(width: 380)
+        }
+    }
+
+    var bodyPart4: some View {
+        bodyPart3
+        .confirmationDialog(
+            "Delete Folder?",
+            isPresented: Binding(
+                get: {
+                    pendingDeleteFolder != nil
+                },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeleteFolder = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(
+                "Delete Folder",
+                role: .destructive
+            ) {
+                if let name = pendingDeleteFolder {
+                    Task {
+                        await deleteFolder(name)
+                    }
+                }
+            }
+
+            Button("Cancel", role: .cancel) {
+                pendingDeleteFolder = nil
+            }
+        } message: {
+            Text(
+                "The folder “\(pendingDeleteFolder ?? "")” will be deleted. The meetings in it are not deleted."
+            )
+        }
+        .alert(
+            addToSessionTitle,
+            isPresented: Binding(
+                get: {
+                    addToSessionResult != nil
+                },
+                set: { isPresented in
+                    if !isPresented {
+                        addToSessionResult = nil
+                        addToSessionTitle =
+                            Self.defaultAlertTitle
+                    }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                addToSessionResult = nil
+                addToSessionTitle = Self.defaultAlertTitle
+            }
+        } message: {
+            Text(addToSessionResult ?? "")
+        }
+        .background(sessionRailDialogs)
         .sheet(
             isPresented:
                 $isShowingSaveContextSessionSheet
@@ -498,7 +880,7 @@ struct MeetingsView: View {
         }
     }
 
-    private var meetingListPane: some View {
+    var meetingListPane: some View {
         VStack(spacing: 0) {
             controls
                 .padding(.horizontal, 12)
@@ -559,12 +941,21 @@ struct MeetingsView: View {
                                         meeting.id
                                     ),
                             toggleContext: {
+                                // Ticking a row also selects it so the
+                                // detail pane follows the click.
+                                selectedMeetingID = meeting.id
                                 toggleMeetingContext(
                                     meeting
                                 )
                             }
                         )
                         .tag(meeting.id)
+                        .draggable(dragPayload(for: meeting)) {
+                            dragPreview(for: meeting)
+                        }
+                        .contextMenu {
+                            meetingFolderMenu(for: meeting)
+                        }
                     }
                     .listStyle(.inset)
                     .frame(
@@ -583,12 +974,26 @@ struct MeetingsView: View {
             Divider()
 
             VStack(spacing: 8) {
-                HStack {
+                HStack(spacing: 4) {
                     Text(
-                        "\(filteredMeetings.count) meeting\(filteredMeetings.count == 1 ? "" : "s")"
+                        "\(filteredMeetings.count) meeting\(filteredMeetings.count == 1 ? "" : "s")\(sessionFilterNote)"
+                            + (
+                                contextSelectionCount > 0
+                                    ? " · \(contextSelectionCount) selected"
+                                    : ""
+                            )
                     )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                    if contextSelectionCount > 0 {
+                        Text("·")
+
+                        Button("Clear") {
+                            clearContextSelection()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .disabled(isBuildingContext)
+                    }
 
                     Spacer()
 
@@ -597,41 +1002,27 @@ struct MeetingsView: View {
                             .controlSize(.small)
                     }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Text(
-                        "Selected: \(contextSelectionCount)"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
                     Spacer()
 
-                    Button("Clear") {
-                        clearContextSelection()
-                    }
-                    .disabled(
-                        contextMeetingIDs.isEmpty
-                        || isBuildingContext
-                    )
+                    addToMenu
 
                     Button {
-                        Task {
-                            await buildSelectedContext()
-                        }
+                        selectedWorkspaceTab = .context
                     } label: {
                         if isBuildingContext {
                             ProgressView()
                                 .controlSize(.small)
                         } else {
-                            Text("Build Context")
+                            Text(askButtonTitle)
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(
-                        contextMeetingIDs.isEmpty
-                        || isBuildingContext
-                    )
+                    .disabled(askButtonDisabled)
+                    .help("Open the Ask tab and ask questions")
                 }
             }
             .padding(.horizontal, 12)
@@ -644,22 +1035,78 @@ struct MeetingsView: View {
         )
     }
 
-    private var controls: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Picker(
-                    "Status",
-                    selection: statusFilterBinding
-                ) {
-                    ForEach(StatusFilter.allCases) { status in
-                        Text(status.rawValue)
-                            .tag(status)
+    var addToMenu: some View {
+        Menu("Add to") {
+            Section("Folder") {
+                ForEach(folders) { folder in
+                    Button(folder.name) {
+                        Task {
+                            await addRunsToFolder(
+                                folder.name,
+                                contextMeetingRuns
+                            )
+                        }
                     }
                 }
-                .labelsHidden()
-                .frame(width: 150)
+
+                Button("New Folder…") {
+                    openCreateFolder(
+                        with: contextMeetingRuns
+                    )
+                }
+            }
+
+            Section("Session") {
+                ForEach(
+                    allSessions.filter { !$0.isDynamic }
+                ) { session in
+                    Button(session.name) {
+                        Task {
+                            await addDroppedRuns(
+                                contextMeetingRuns,
+                                toSession: session.name
+                            )
+                        }
+                    }
+                }
+
+                Button("New Session…") {
+                    saveContextSessionError = nil
+                    saveContextSessionName = ""
+                    isShowingSaveContextSessionSheet = true
+                }
+            }
+        }
+        .fixedSize()
+        .disabled(
+            contextMeetingIDs.isEmpty
+            || isBuildingContext
+        )
+    }
+
+    var controls: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text(libraryTitle)
+                    .font(.headline)
+                    .lineLimit(1)
 
                 Spacer()
+
+                Menu {
+                    Picker("Sort by", selection: $sortOrderRaw) {
+                        ForEach(MeetingSortOrder.allCases) { order in
+                            Text(order.label).tag(order.rawValue)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Sort meetings")
 
                 Button {
                     Task {
@@ -683,1350 +1130,59 @@ struct MeetingsView: View {
         }
     }
 
-    private var detailPane: some View {
-        VStack(spacing: 0) {
-            Picker(
-                "Meetings workspace",
-                selection:
-                    $selectedWorkspaceTab
-            ) {
-                ForEach(
-                    MeetingWorkspaceTab.allCases
-                ) { tab in
-                    Text(tab.rawValue)
-                        .tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 300)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-
-            Divider()
-
-            Group {
-                switch selectedWorkspaceTab {
-                case .meeting:
-                    meetingWorkspace
-
-                case .context:
-                    contextWorkspace
-                }
-            }
-            .frame(
-                maxWidth: .infinity,
-                maxHeight: .infinity
-            )
-        }
+    /// With a session open and nothing ticked, the button asks the
+    /// whole session; otherwise it asks about the ticked meetings.
+    var asksWholeSession: Bool {
+        sessionFilterSession != nil && contextMeetingIDs.isEmpty
     }
 
-    @ViewBuilder
-    private var meetingWorkspace: some View {
-        if let meeting = selectedMeeting {
-            VStack(spacing: 0) {
-                meetingHeader(meeting)
-
-                Divider()
-
-                ScrollView {
-                    VStack(
-                        alignment: .leading,
-                        spacing: 22
-                    ) {
-                        HStack(
-                            alignment: .top,
-                            spacing: 36
-                        ) {
-                            detailRow(
-                                label: "Date",
-                                value: formattedDate(meeting.date)
-                            )
-
-                            detailRow(
-                                label: "Participants",
-                                value: meeting.participantsText
-                            )
-                        }
-
-                        if isLoadingDetail {
-                            ProgressView(
-                                "Loading meeting details…"
-                            )
-                        }
-
-                        if let detailErrorMessage {
-                            Text(detailErrorMessage)
-                                .font(.caption)
-                                .foregroundStyle(
-                                    .secondary
-                                )
-                                .textSelection(
-                                    .enabled
-                                )
-                        }
-
-                        if let meetingDetail {
-                            MeetingMarkdownView(
-                                markdown:
-                                    meetingDocumentMarkdown(
-                                        meeting: meeting,
-                                        detail: meetingDetail
-                                    )
-                            )
-                        }
-                    }
-                    .frame(
-                        maxWidth: .infinity,
-                        alignment: .leading
-                    )
-                    .padding(24)
-                }
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: .topLeading
-                )
-            }
-            .frame(
-                maxWidth: .infinity,
-                maxHeight: .infinity,
-                alignment: .topLeading
-            )
-
-        } else {
-            ContentUnavailableView(
-                "Select a meeting",
-                systemImage: "list.bullet.rectangle",
-                description: Text(
-                    "Choose a meeting from the list to view its details."
-                )
-            )
-            .frame(
-                maxWidth: .infinity,
-                maxHeight: .infinity
-            )
-        }
+    var askButtonTitle: String {
+        asksWholeSession ? "Ask This Session" : "Ask About These"
     }
 
-    private var contextWorkspace: some View {
-        VStack(spacing: 0) {
-            if let builtContext {
-                VStack(
-                    alignment: .leading,
-                    spacing: 8
-                ) {
-                    HStack {
-                        VStack(
-                            alignment: .leading,
-                            spacing: 3
-                        ) {
-                            Text(
-                                "Selected Meeting Context"
-                            )
-                            .font(.headline)
-
-                            Text(
-                                "\(builtContext.meetingCount) meeting\(builtContext.meetingCount == 1 ? "" : "s")"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-
-                        Spacer()
-
-                        Button {
-                            saveContextSessionError = nil
-                            saveContextSessionName = ""
-                            isShowingSaveContextSessionSheet = true
-                        } label: {
-                            Label(
-                                "Save as Session",
-                                systemImage:
-                                    "square.and.arrow.down"
-                            )
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(
-                            isRunningContextQuery
-                            || isBuildingContext
-                        )
-
-                        Button {
-                            Task {
-                                await buildSelectedContext()
-                            }
-                        } label: {
-                            Label(
-                                "Refresh Context",
-                                systemImage:
-                                    "arrow.clockwise"
-                            )
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(
-                            isBuildingContext
-                            || isRunningContextQuery
-                            || contextMeetingIDs
-                                .isEmpty
-                        )
-                    }
-
-                    DisclosureGroup(
-                        isExpanded:
-                            $isShowingContextMeetings
-                    ) {
-                        VStack(
-                            alignment: .leading,
-                            spacing: 5
-                        ) {
-                            ForEach(
-                                builtContext.meetingLabels,
-                                id: \.self
-                            ) { label in
-                                Text(label)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .padding(.top, 5)
-                    } label: {
-                        Text(
-                            "Meetings in Context (\(builtContext.meetingCount))"
-                        )
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    }
-
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-
-                Divider()
-
-                VStack(spacing: 0) {
-                    MeetingMarkdownScrollView(
-                        markdown: contextConversation.isEmpty
-                            ? "## Context Ready\n\n\(builtContext.prepText)"
-                            : meetingContextConversationMarkdown,
-                        scrollToBottomToken: contextConversation.count
-                    )
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: .infinity
-                    )
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 18)
-
-                    if isRunningContextQuery {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
-
-                            Text("Qwen is working…")
-                                .foregroundStyle(.secondary)
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 10)
-                    }
-                }
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity
-                )
-
-                Divider()
-
-                meetingContextComposer
-
-            } else {
-                ContentUnavailableView {
-                    Label(
-                        "Build a meeting context",
-                        systemImage:
-                            "square.stack.3d.up"
-                    )
-                } description: {
-                    Text(
-                        contextMeetingIDs.isEmpty
-                            ? "Select meetings with the checkboxes in the meeting list, then build context."
-                            : "Build context from the \(contextSelectionCount) selected meeting\(contextSelectionCount == 1 ? "" : "s")."
-                    )
-                } actions: {
-                    if !contextMeetingIDs.isEmpty {
-                        Button(
-                            "Build Context"
-                        ) {
-                            Task {
-                                await buildSelectedContext()
-                            }
-                        }
-                    }
-                }
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity
-                )
-            }
-
-            if let contextErrorMessage {
-                Text(contextErrorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-                    .padding(
-                        .horizontal,
-                        24
-                    )
-                    .padding(
-                        .bottom,
-                        10
-                    )
-            }
-        }
-    }
-
-
-
-    private var meetingContextComposer:
-        some View
-    {
-        VStack(
-            alignment: .leading,
-            spacing: 10
-        ) {
-            PromptFavoritesBar(
-                promptText:
-                    $meetingContextController
-                        .prompt,
-                onSelect: { favorite in
-                    switch favorite.category {
-                    case "recipe":
-                        meetingContextController
-                            .queryMode = "synthesis"
-                    case "changes":
-                        meetingContextController
-                            .queryMode = "changes"
-                    default:
-                        meetingContextController
-                            .queryMode = "normal"
-                    }
-                }
-            )
-
-            Divider()
-                .padding(.top, 2)
-
-            HStack {
-                Text("Ask this Context")
-                    .font(.headline)
-
-                Spacer()
-
-                if let contextStatusMessage {
-                    Text(contextStatusMessage)
-                        .font(.caption)
-                        .foregroundStyle(
-                            .secondary
-                        )
-                        .lineLimit(1)
-                }
-            }
-
-            HStack(
-                alignment: .bottom,
-                spacing: 10
-            ) {
-                TextEditor(
-                    text:
-                        $meetingContextController
-                            .prompt
-                )
-                .font(.body)
-                .frame(
-                    minHeight: 58,
-                    maxHeight: 96
-                )
-                .padding(5)
-                .background(
-                    RoundedRectangle(
-                        cornerRadius: 8
-                    )
-                    .fill(.quaternary)
-                )
-                .overlay(
-                    RoundedRectangle(
-                        cornerRadius: 8
-                    )
-                    .stroke(
-                        .separator,
-                        lineWidth: 1
-                    )
-                )
-                .disabled(
-                    isRunningContextQuery
-                )
-
-                if isRunningContextQuery {
-                    Button(
-                        role: .destructive
-                    ) {
-                        meetingContextController
-                            .cancelQuery()
-                    } label: {
-                        Label(
-                            "Cancel Query",
-                            systemImage:
-                                "xmark.circle.fill"
-                        )
-                        .frame(
-                            minWidth: 96,
-                            minHeight: 30
-                        )
-                    }
-                    .buttonStyle(
-                        .bordered
-                    )
-                    .help(
-                        "Stop the active context query."
-                    )
-
-                } else {
-                    Button {
-                        Task {
-                            await sendContextQuery()
-                        }
-                    } label: {
-                        Label(
-                            "Send",
-                            systemImage:
-                                "paperplane.fill"
-                        )
-                        .frame(
-                            minWidth: 72,
-                            minHeight: 30
-                        )
-                    }
-                    .buttonStyle(
-                        .borderedProminent
-                    )
-                    .disabled(
-                        meetingContextController
-                            .prompt
-                            .trimmingCharacters(
-                                in:
-                                    .whitespacesAndNewlines
-                            )
-                            .isEmpty
-                    )
-                }
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
-    }
-
-    private var meetingContextConversationMarkdown:
-        String
-    {
-        contextConversation
-            .enumerated()
-            .map { index, item in
-                let heading =
-                    item.isUser
-                        ? "## You"
-                        : "## Assistant"
-
-                let turn =
-                    "\(heading)\n\n\(item.content)"
-
-                if index == 0 {
-                    return turn
-                }
-
-                return
-                    "────────────────────────\n\n\(turn)"
-            }
-            .joined(
-                separator: "\n\n"
-            )
-    }
-
-    @MainActor
-    private func toggleMeetingContext(
-        _ meeting: Meeting
-    ) {
-        meetingContextController
-            .toggleMeeting(
-                id: meeting.id
-            )
-    }
-
-    @MainActor
-    private func clearContextSelection() {
-        meetingContextController
-            .clearSelection()
-    }
-
-    @MainActor
-    private func buildSelectedContext()
-        async
-    {
-        let runs = contextMeetingRuns
-
-        await meetingContextController
-            .buildContext(
-                meetingRuns: runs
-            )
-
-        if meetingContextController
-            .builtContext != nil {
-            selectedWorkspaceTab =
-                .context
-        }
-    }
-
-    @MainActor
-    private func sendContextQuery()
-        async
-    {
-        meetingContextController
-            .startQuery()
-    }
-
-    @MainActor
-    private func saveCurrentContextAsSession()
-        async
-    {
-        guard
-            let builtContext,
-            !isSavingContextSession,
-            !isRunningContextQuery
-        else {
-            return
-        }
-
-        let name =
-            saveContextSessionName
-                .trimmingCharacters(
-                    in:
-                        .whitespacesAndNewlines
-                )
-
-        guard !name.isEmpty else {
-            return
-        }
-
-        isSavingContextSession = true
-        saveContextSessionError = nil
-
-        defer {
-            isSavingContextSession = false
-        }
-
-        do {
-            let result = try await backend
-                .saveMeetingContextSession(
-                    name: name,
-                    meetingRuns:
-                        builtContext
-                            .meetingRuns,
-                    conversation:
-                        contextConversation
-                )
-
-            isShowingSaveContextSessionSheet = false
-            saveContextSessionResult =
-                "Saved “\(result.sessionName)” with \(result.meetingCount) meeting\(result.meetingCount == 1 ? "" : "s") and \(result.turnCount) conversation turn\(result.turnCount == 1 ? "" : "s")."
-
-        } catch {
-            saveContextSessionError =
-                error.localizedDescription
-        }
-    }
-
-    private func meetingHeader(
-        _ meeting: Meeting
-    ) -> some View {
-        HStack(
-            alignment: .center,
-            spacing: 12
-        ) {
-            VStack(
-                alignment: .leading,
-                spacing: 4
-            ) {
-                Text(meeting.title)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                Text(
-                    meeting.isPublished
-                        ? "Published"
-                        : "Unpublished"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            StatusBadge(
-                status: meeting.status,
-                isPublished: meeting.isPublished
-            )
-
-            if !meeting.isPublished {
-                Button(role: .destructive) {
-                    Task {
-                        await prepareDeleteSelectedMeeting()
-                    }
-                } label: {
-                    if isDeletingMeeting {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label(
-                            "Delete Meeting…",
-                            systemImage: "trash"
-                        )
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isDeletingMeeting || isPublishing)
-                .help(
-                    "Delete this unpublished meeting and its generated artifacts."
-                )
-            }
-
-            if meeting.canPublish {
-                Button {
-                    showingPublishConfirmation =
-                        true
-                } label: {
-                    if isPublishing {
-                        HStack(spacing: 7) {
-                            ProgressView()
-                                .controlSize(.small)
-
-                            Text("Publishing…")
-                        }
-                    } else {
-                        Label(
-                            "Publish & Archive",
-                            systemImage:
-                                "tray.and.arrow.up"
-                        )
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isPublishing)
-                .help(
-                    "Publish this meeting to the configured archive."
-                )
-            } else if meeting.isPublished {
-                Button {
-                    Task {
-                        await prepareUnpublishSelectedMeeting()
-                    }
-                } label: {
-                    if isUnpublishing {
-                        HStack(spacing: 7) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Unpublishing…")
-                        }
-                    } else {
-                        Label(
-                            "Unpublish…",
-                            systemImage: "tray.and.arrow.down"
-                        )
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(isUnpublishing || isDeletingMeeting || isPublishing)
-                .help(
-                    "Return this published meeting to Unpublished status before deleting it."
-                )
-            }
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 14)
-    }
-
-    private func meetingDocumentMarkdown(
-        meeting: Meeting,
-        detail: MeetingDetail
-    ) -> String {
-        var sections: [String] = []
-
-        if detail.hasSummary,
-           !detail.summary.isEmpty {
-            sections.append(
-                "# Summary\n\n\(detail.summary)"
-            )
-        }
-
-        let summaryHasDecisions = summaryContainsHeading(
-            detail.summary,
-            matching: ["decisions"]
-        )
-        let summaryHasOpenQuestions = summaryContainsHeading(
-            detail.summary,
-            matching: ["open questions"]
-        )
-        let summaryHasActionItemsOrFollowUps = summaryContainsHeading(
-            detail.summary,
-            matching: ["action items", "follow-ups", "follow ups"]
-        )
-        let summaryHasTopics = summaryContainsHeading(
-            detail.summary,
-            matching: ["topics"]
-        )
-
-        if !detail.decisions.isEmpty,
-           !summaryHasDecisions {
-            let decisions = detail.decisions
-                .map { "- \($0)" }
-                .joined(separator: "\n\n")
-
-            sections.append(
-                "# Decisions\n\n\(decisions)"
-            )
-        }
-
-        if !detail.commitments.isEmpty {
-            let commitments = detail.commitments
-                .map { commitment in
-                    var prefix = ""
-
-                    if !commitment.owner.isEmpty {
-                        prefix = "**\(commitment.owner):** "
-                    }
-
-                    var suffix = ""
-                    if !commitment.status.isEmpty {
-                        suffix = " (\(commitment.status))"
-                    }
-
-                    return "- \(prefix)\(commitment.action)\(suffix)"
-                }
-                .joined(separator: "\n\n")
-
-            sections.append(
-                "# Commitments\n\n\(commitments)"
-            )
-        }
-
-        if !detail.openQuestions.isEmpty,
-           !summaryHasOpenQuestions {
-            let questions = detail.openQuestions
-                .map { "- \($0)" }
-                .joined(separator: "\n\n")
-
-            sections.append(
-                "# Open Questions\n\n\(questions)"
-            )
-        }
-
-        if !detail.followUps.isEmpty,
-           !summaryHasActionItemsOrFollowUps {
-            let followUps = detail.followUps
-                .map { "- \($0)" }
-                .joined(separator: "\n\n")
-
-            sections.append(
-                "# Follow-ups\n\n\(followUps)"
-            )
-        }
-
-        if !detail.topics.isEmpty,
-           !summaryHasTopics {
-            let topics = detail.topics
-                .map { topic in
-                    var lines: [String] = []
-
-                    if topic.status.isEmpty {
-                        lines.append(
-                            "### \(topic.name)"
-                        )
-                    } else {
-                        lines.append(
-                            "### \(topic.name) — \(topic.status)"
-                        )
-                    }
-
-                    if !topic.summary.isEmpty {
-                        lines.append(
-                            topic.summary
-                        )
-                    }
-
-                    return lines.joined(
-                        separator: "\n"
-                    )
-                }
-                .joined(
-                    separator: "\n\n"
-                )
-
-            sections.append(
-                "# Topics\n\n\(topics)"
-            )
-        }
-
-        if let processing = detail.processing {
-            var runtimeLines: [String] = []
-
-            if !processing.aiModel.isEmpty {
-                runtimeLines.append(
-                    "**AI Model:** \(processing.aiModel)"
-                )
-            }
-
-            var profileParts: [String] = []
-            if !processing.profileDisplay.isEmpty {
-                profileParts.append(processing.profileDisplay)
-            }
-            if !processing.mode.isEmpty {
-                profileParts.append(processing.mode)
-            }
-            if !profileParts.isEmpty {
-                runtimeLines.append(
-                    "**Processing:** \(profileParts.joined(separator: " · "))"
-                )
-            }
-
-            if processing.contextSizeTokens > 0 {
-                runtimeLines.append(
-                    "**Context:** \(processing.contextSizeTokens.formatted()) tokens"
-                )
-            }
-
-            if !processing.whisperModel.isEmpty {
-                var whisper = processing.whisperModel
-                if processing.whisperChunkMinutes > 0 {
-                    whisper += " · \(processing.whisperChunkMinutes)-minute chunks"
-                }
-                runtimeLines.append(
-                    "**Whisper:** \(whisper)"
-                )
-            }
-
-            if !runtimeLines.isEmpty {
-                sections.append(
-                    "# Processing\n\n"
-                    + runtimeLines.joined(separator: "\n\n")
-                )
-            }
-        }
-
-        sections.append(
-            "# Run\n\n\(meeting.run)"
-        )
-
-        return sections.joined(
-            separator: "\n\n"
-        )
-    }
-
-    private func summaryContainsHeading(
-        _ summary: String,
-        matching headings: Set<String>
-    ) -> Bool {
-        for rawLine in summary.components(separatedBy: .newlines) {
-            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            while line.hasPrefix("#") {
-                line.removeFirst()
-                line = line.trimmingCharacters(in: .whitespaces)
-            }
-
-            while line.hasPrefix("**"), line.hasSuffix("**"), line.count >= 4 {
-                line = String(line.dropFirst(2).dropLast(2))
-                    .trimmingCharacters(in: .whitespaces)
-            }
-
-            line = line.trimmingCharacters(
-                in: CharacterSet(charactersIn: "*_ :.-")
-            )
-            .lowercased()
-
-            if headings.contains(line) {
-                return true
-            }
-        }
-
-        return false
-    }
-
-    private func detailRow(
-        label: String,
-        value: String
-    ) -> some View {
-        VStack(
-            alignment: .leading,
-            spacing: 4
-        ) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(
-                value.isEmpty
-                    ? "—"
-                    : value
-            )
-            .textSelection(.enabled)
-        }
-    }
-
-    private func formattedDate(_ rawDate: String) -> String {
-        guard !rawDate.isEmpty else {
-            return "—"
-        }
-
-        let input = DateFormatter()
-        input.locale = Locale(identifier: "en_US_POSIX")
-        input.dateFormat = "yyyy-MM-dd"
-
-        guard let date = input.date(from: rawDate) else {
-            return rawDate
-        }
-
-        let output = DateFormatter()
-        output.locale = Locale.current
-        output.dateStyle = .long
-        output.timeStyle = .none
-
-        return output.string(from: date)
-    }
-
-    private func deleteConfirmationMessage(
-        _ plan: MeetingDeletePlanResponse
-    ) -> String {
-        var parts = [
-            "The meeting output folder and all generated transcript/analysis artifacts will be moved to the macOS Trash."
-        ]
-
-        if plan.sourceFound && plan.sourceIsManaged {
-            parts.append(
-                "Choose ‘Delete Meeting, Keep Recording’ to preserve the app-managed source recording, or ‘Delete Meeting and Recording’ to move that recording to Trash too."
-            )
-        } else if plan.sourceFound {
-            parts.append(
-                "The source audio appears to be external/imported and will always be kept."
-            )
-        } else {
-            parts.append(
-                "No matching source recording was found, so there is no recording to remove."
-            )
-        }
-
-        if plan.sessionReferenceCount > 0 {
-            parts.append("It will also be removed from \(plan.sessionReferenceCount) saved Session\(plan.sessionReferenceCount == 1 ? "" : "s").")
-        }
-
-        return parts.joined(separator: " ")
-    }
-
-    private func unpublishConfirmationMessage(
-        _ plan: MeetingUnpublishPlanResponse
-    ) -> String {
-        var message: String
-
-        if archiveRequiresPermanentDeletion(plan.archivePath) {
-            message = "This meeting's published archive is stored on a network or non-local volume that does not use the macOS Trash. The published archive folder will be permanently deleted and cannot be recovered from Trash. The local meeting and source recording will remain available, and the meeting will return to Unpublished status."
-        } else {
-            message = "The published archive copy will be moved to the macOS Trash and this meeting will return to Unpublished status. The local meeting and source recording will remain available."
-        }
-
-        if plan.sessionReferenceCount > 0 {
-            message += " It will also be removed from \(plan.sessionReferenceCount) saved Session\(plan.sessionReferenceCount == 1 ? "" : "s") because Sessions use published meetings."
-        }
-
-        message += " You can then delete the unpublished meeting separately if you want it removed entirely."
-        return message
-    }
-
-    @MainActor
-    private func prepareDeleteSelectedMeeting() async {
-        guard let selectedMeeting,
-              !selectedMeeting.isPublished,
-              !isDeletingMeeting,
-              !isPublishing,
-              !isUnpublishing
-        else {
-            return
-        }
-
-        isDeletingMeeting = true
-        deleteErrorMessage = nil
-
-        defer {
-            isDeletingMeeting = false
-        }
-
-        do {
-            pendingDeletePlan =
-                try await backend.meetingDeletePlan(
-                    run: selectedMeeting.run
-                )
-            showingDeleteConfirmation = true
-        } catch {
-            deleteErrorMessage =
-                error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func deleteSelectedMeeting(
-        operation: MeetingDeleteOperation
-    ) async {
-        guard let selectedMeeting,
-              let plan = pendingDeletePlan,
-              plan.run == selectedMeeting.run,
-              !selectedMeeting.isPublished,
-              !isDeletingMeeting
-        else {
-            return
-        }
-
-        isDeletingMeeting = true
-        deleteErrorMessage = nil
-
-        defer {
-            isDeletingMeeting = false
-        }
-
-        do {
-            guard let runPath = usableFilesystemPath(plan.runPath) else {
-                throw NSError(
-                    domain: "MeetingTranscriber.Delete",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The meeting output folder path is unavailable."]
-                )
-            }
-            let runURL = URL(fileURLWithPath: runPath)
-            guard FileManager.default.fileExists(atPath: runURL.path) else {
-                throw NSError(
-                    domain: "MeetingTranscriber.Delete",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The meeting output folder is missing."]
-                )
-            }
-
-            var trashedRunURL: NSURL?
-            try FileManager.default.trashItem(
-                at: runURL,
-                resultingItemURL: &trashedRunURL
-            )
-
-            if operation.deletesManagedRecording,
-               plan.sourceIsManaged,
-               let sourcePath = usableFilesystemPath(plan.sourcePath),
-               plan.sourceFound {
-                let sourceURL = URL(fileURLWithPath: sourcePath)
-                if FileManager.default.fileExists(atPath: sourceURL.path) {
-                    var trashedSourceURL: NSURL?
-                    try FileManager.default.trashItem(
-                        at: sourceURL,
-                        resultingItemURL: &trashedSourceURL
-                    )
-                }
-            }
-
-            _ = try await backend.finalizeMeetingDelete(
-                run: plan.run
-            )
-
-            transcriptionQueueCleanupRequest =
-                MeetingTranscriptionQueueCleanupRequest(
-                    run: plan.run,
-                    sourcePath: plan.sourcePath
-                )
-
-            if meetingContextController.meetingIDs.contains(
-                selectedMeeting.id
-            ) {
-                meetingContextController.toggleMeeting(
-                    id: selectedMeeting.id
-                )
-            }
-
-            pendingDeletePlan = nil
-            selectedMeetingID = nil
-            meetingDetail = nil
-            detailErrorMessage = nil
-
-            await reloadMeetings()
-        } catch {
-            deleteErrorMessage =
-                error.localizedDescription
-        }
-    }
-
-    private enum PublishedArchiveDisposition {
-        case systemTrash
-        case permanentDelete
-    }
-
-    private var unpublishUsesPermanentArchiveDeletion: Bool {
-        guard let plan = pendingUnpublishPlan else {
-            return false
-        }
-        return archiveRequiresPermanentDeletion(plan.archivePath)
-    }
-
-    private func archiveRequiresPermanentDeletion(_ path: String?) -> Bool {
-        guard let archivePath = usableFilesystemPath(path) else {
+    var askButtonDisabled: Bool {
+        if asksWholeSession {
             return false
         }
 
-        let archiveURL = URL(fileURLWithPath: archivePath)
-        do {
-            let values = try archiveURL.resourceValues(
-                forKeys: [.volumeIsLocalKey]
-            )
-            return values.volumeIsLocal == false
-        } catch {
-            // If macOS cannot determine the volume type, do not silently
-            // escalate to permanent deletion. The operation will fail later
-            // rather than deleting without the stronger confirmation.
-            return false
-        }
+        return contextMeetingIDs.isEmpty || isBuildingContext
     }
 
-    private func removePublishedArchive(
-        _ archiveURL: URL,
-        permanently: Bool
-    ) throws -> PublishedArchiveDisposition {
-        if permanently {
-            try FileManager.default.removeItem(at: archiveURL)
-            return .permanentDelete
-        }
-
-        var trashedArchiveURL: NSURL?
-        try FileManager.default.trashItem(
-            at: archiveURL,
-            resultingItemURL: &trashedArchiveURL
-        )
-        return .systemTrash
-    }
-
+    /// Builds the context automatically after "Ask About These",
+    /// but only when nothing is built yet, so it never wipes a
+    /// conversation that is already in progress.
     @MainActor
-    private func prepareUnpublishSelectedMeeting() async {
-        guard let selectedMeeting,
-              selectedMeeting.isPublished,
-              !isUnpublishing,
-              !isPublishing,
-              !isDeletingMeeting
-        else {
+    func autoBuildContextIfNeeded() async {
+        let onContextTab: Bool = selectedWorkspaceTab == .context
+        let hasSelection: Bool = !contextMeetingIDs.isEmpty
+        let hasBuilt: Bool = builtContext != nil
+
+        if !onContextTab || !hasSelection || hasBuilt {
             return
         }
 
-        isUnpublishing = true
-        unpublishErrorMessage = nil
+        try? await Task.sleep(nanoseconds: 500_000_000)
 
-        defer {
-            isUnpublishing = false
-        }
-
-        do {
-            pendingUnpublishPlan = try await backend.meetingUnpublishPlan(
-                run: selectedMeeting.run
-            )
-            showingUnpublishConfirmation = true
-        } catch {
-            unpublishErrorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func unpublishSelectedMeeting() async {
-        guard let selectedMeeting,
-              let plan = pendingUnpublishPlan,
-              plan.run == selectedMeeting.run,
-              selectedMeeting.isPublished,
-              !isUnpublishing
-        else {
+        if Task.isCancelled {
             return
         }
 
-        isUnpublishing = true
-        unpublishErrorMessage = nil
+        let stillOnContextTab: Bool =
+            selectedWorkspaceTab == .context
+        let stillNotBuilt: Bool = builtContext == nil
+        let busy: Bool =
+            isBuildingContext || isRunningContextQuery
 
-        defer {
-            isUnpublishing = false
-        }
-
-        do {
-            guard let archivePath = usableFilesystemPath(plan.archivePath) else {
-                throw NSError(
-                    domain: "MeetingTranscriber.Unpublish",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The published archive folder path is unavailable."]
-                )
-            }
-            let archiveURL = URL(fileURLWithPath: archivePath)
-            guard FileManager.default.fileExists(atPath: archiveURL.path) else {
-                throw NSError(
-                    domain: "MeetingTranscriber.Unpublish",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The published archive folder is missing."]
-                )
-            }
-
-            let permanentlyDeleteArchive =
-                archiveRequiresPermanentDeletion(plan.archivePath)
-
-            let archiveDisposition = try removePublishedArchive(
-                archiveURL,
-                permanently: permanentlyDeleteArchive
-            )
-
-            _ = try await backend.finalizeMeetingUnpublish(
-                run: plan.run
-            )
-
-            switch archiveDisposition {
-            case .systemTrash:
-                unpublishSuccessMessage =
-                    "The meeting is now Unpublished. Its published archive copy was moved to the macOS Trash."
-            case .permanentDelete:
-                unpublishSuccessMessage =
-                    "The meeting is now Unpublished. Its published archive copy was permanently deleted from the network/non-local archive volume."
-            }
-
-            if meetingContextController.meetingIDs.contains(
-                selectedMeeting.id
-            ) {
-                meetingContextController.toggleMeeting(
-                    id: selectedMeeting.id
-                )
-            }
-
-            pendingUnpublishPlan = nil
-            meetingDetail = nil
-            detailErrorMessage = nil
-
-            await reloadMeetings()
-            selectedMeetingID = meetings.first(where: {
-                $0.run == plan.run
-            })?.id
-        } catch {
-            unpublishErrorMessage = error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func publishSelectedMeeting() async {
-        guard let selectedMeeting,
-              selectedMeeting.canPublish,
-              !isPublishing
-        else {
+        if !stillOnContextTab || !stillNotBuilt || busy {
             return
         }
 
-        let run = selectedMeeting.run
-
-        isPublishing = true
-        publishErrorMessage = nil
-
-        defer {
-            isPublishing = false
-        }
-
-        do {
-            _ = try await backend.publishMeeting(
-                run: run
-            )
-
-            // Publishing changes the catalog status, not
-            // the already-loaded readable meeting content.
-            // Refresh the list in place and leave the detail
-            // document untouched so the user's scroll
-            // position stays where it was.
-            await reloadMeetings()
-
-        } catch {
-            publishErrorMessage =
-                error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func reloadSelectedMeetingDetail() async {
-        meetingDetail = nil
-        detailErrorMessage = nil
-
-        guard let selectedMeeting else {
-            return
-        }
-
-        isLoadingDetail = true
-
-        defer {
-            isLoadingDetail = false
-        }
-
-        do {
-            meetingDetail =
-                try await backend.loadMeetingDetail(
-                    run: selectedMeeting.run
-                )
-        } catch {
-            detailErrorMessage =
-                error.localizedDescription
-        }
-    }
-
-    @MainActor
-    private func reloadMeetings() async {
-        isLoading = true
-        errorMessage = nil
-
-        defer {
-            isLoading = false
-        }
-
-        do {
-            let loadedMeetings =
-                try await backend.loadMeetings()
-
-            meetings = loadedMeetings
-
-            if let requestedRun = navigation.requestedMeetingRun,
-               let requestedMeeting = loadedMeetings.first(
-                    where: {
-                        $0.run == requestedRun
-                            || $0.id == requestedRun
-                    }
-               ) {
-                selectedMeetingID = requestedMeeting.id
-                selectedWorkspaceTab = .meeting
-                navigation.requestedMeetingRun = nil
-            }
-
-            if let selectedMeetingID,
-               !loadedMeetings.contains(
-                    where: {
-                        $0.id == selectedMeetingID
-                    }
-               ) {
-                self.selectedMeetingID = nil
-            }
-
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        await buildSelectedContext()
     }
 }
 
-private struct MeetingRow: View {
+
+struct MeetingRow: View {
     let meeting: Meeting
     let isInContext: Bool
     let toggleContext: () -> Void
@@ -2110,7 +1266,7 @@ private struct MeetingRow: View {
     }
 }
 
-private struct StatusBadge: View {
+struct StatusBadge: View {
     let status: String
     let isPublished: Bool
 
@@ -2138,13 +1294,13 @@ private struct StatusBadge: View {
     }
 }
 
-private struct MeetingTranscriptionQueueCleanupRequest: Equatable {
+struct MeetingTranscriptionQueueCleanupRequest: Equatable {
     let id = UUID()
     let run: String
     let sourcePath: String?
 }
 
-private struct MeetingTranscriptionQueueCleanupBridge: View {
+struct MeetingTranscriptionQueueCleanupBridge: View {
     @EnvironmentObject
     private var transcriptionController: TranscriptionController
 

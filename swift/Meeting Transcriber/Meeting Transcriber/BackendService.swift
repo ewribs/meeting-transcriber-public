@@ -186,6 +186,14 @@ nonisolated struct BackendService: Sendable {
             )
     }
 
+    func backupState() async throws {
+        _ = try await runBridge(
+            arguments: [
+                "backup-state"
+            ]
+        )
+    }
+
     func performStartupRetention() async throws {
         _ = try await runBridge(
             arguments: [
@@ -866,7 +874,8 @@ nonisolated struct BackendService: Sendable {
         person: String,
         title: String,
         topic: String,
-        historyLabel: String
+        historyLabel: String,
+        rulesJSON: String
     ) async throws -> DynamicSessionChangeResponse {
         let data = try await runBridge(
             arguments: [
@@ -876,6 +885,7 @@ nonisolated struct BackendService: Sendable {
                 title,
                 topic,
                 historyLabel,
+                rulesJSON,
             ]
         )
 
@@ -897,7 +907,8 @@ nonisolated struct BackendService: Sendable {
         person: String,
         title: String,
         topic: String,
-        historyLabel: String
+        historyLabel: String,
+        rulesJSON: String
     ) async throws -> DynamicSessionChangeResponse {
         let data = try await runBridge(
             arguments: [
@@ -907,12 +918,44 @@ nonisolated struct BackendService: Sendable {
                 title,
                 topic,
                 historyLabel,
+                rulesJSON,
             ]
         )
 
         do {
             return try JSONDecoder().decode(
                 DynamicSessionChangeResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func previewCriteria(
+        person: String,
+        title: String,
+        topic: String,
+        historyLabel: String,
+        rulesJSON: String
+    ) async throws -> CriteriaPreviewResponse {
+        let data = try await runBridge(
+            arguments: [
+                "preview-criteria",
+                person,
+                title,
+                topic,
+                historyLabel,
+                rulesJSON,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                CriteriaPreviewResponse.self,
                 from: data
             )
         } catch {
@@ -986,6 +1029,147 @@ nonisolated struct BackendService: Sendable {
                 RefreshSessionResponse.self,
                 from: data
             )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func addMeetingsToSession(
+        name: String,
+        meetingRuns: [String]
+    ) async throws -> SessionMembershipResponse {
+        try await changeSessionMembership(
+            command: "add-session-meetings",
+            name: name,
+            meetingRuns: meetingRuns
+        )
+    }
+
+    func removeMeetingsFromSession(
+        name: String,
+        meetingRuns: [String]
+    ) async throws -> SessionMembershipResponse {
+        try await changeSessionMembership(
+            command: "remove-session-meetings",
+            name: name,
+            meetingRuns: meetingRuns
+        )
+    }
+
+    private func changeSessionMembership(
+        command: String,
+        name: String,
+        meetingRuns: [String]
+    ) async throws -> SessionMembershipResponse {
+        let runsData = try JSONSerialization.data(
+            withJSONObject: meetingRuns
+        )
+
+        let runsJSON = String(
+            data: runsData,
+            encoding: .utf8
+        ) ?? "[]"
+
+        let data = try await runBridge(
+            arguments: [
+                command,
+                name,
+                runsJSON,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                SessionMembershipResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func loadFolders() async throws -> [MeetingFolder] {
+        try await runFolderCommand(["folders"])
+    }
+
+    func createFolder(
+        name: String
+    ) async throws -> [MeetingFolder] {
+        try await runFolderCommand(["create-folder", name])
+    }
+
+    func renameFolder(
+        oldName: String,
+        newName: String
+    ) async throws -> [MeetingFolder] {
+        try await runFolderCommand(
+            ["rename-folder", oldName, newName]
+        )
+    }
+
+    func deleteFolder(
+        name: String
+    ) async throws -> [MeetingFolder] {
+        try await runFolderCommand(["delete-folder", name])
+    }
+
+    func addMeetingsToFolder(
+        name: String,
+        meetingRuns: [String]
+    ) async throws -> [MeetingFolder] {
+        try await runFolderCommand(
+            [
+                "add-folder-meetings",
+                name,
+                try encodeRunsJSON(meetingRuns),
+            ]
+        )
+    }
+
+    func removeMeetingsFromFolder(
+        name: String,
+        meetingRuns: [String]
+    ) async throws -> [MeetingFolder] {
+        try await runFolderCommand(
+            [
+                "remove-folder-meetings",
+                name,
+                try encodeRunsJSON(meetingRuns),
+            ]
+        )
+    }
+
+    private func encodeRunsJSON(
+        _ runs: [String]
+    ) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: runs
+        )
+
+        return String(
+            data: data,
+            encoding: .utf8
+        ) ?? "[]"
+    }
+
+    private func runFolderCommand(
+        _ arguments: [String]
+    ) async throws -> [MeetingFolder] {
+        let data = try await runBridge(
+            arguments: arguments
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                MeetingFoldersResponse.self,
+                from: data
+            ).folders
         } catch {
             throw invalidOutput(
                 data,

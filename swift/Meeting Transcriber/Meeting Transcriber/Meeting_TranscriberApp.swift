@@ -5,10 +5,53 @@
 //  Created for the Meeting Transcriber project.
 //
 
+import AppKit
 import SwiftUI
+
+/// Warns before quitting while a recording is being captured or is
+/// still being encoded in the background, because quitting then
+/// would lose it.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak static var recordingController: RecordingController?
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let controller = Self.recordingController,
+              controller.isRecording || controller.isFinalizing
+        else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+
+        if controller.isRecording {
+            alert.messageText = "A recording is in progress."
+            alert.informativeText =
+                "If you quit now, the recording in progress will be lost."
+        } else {
+            alert.messageText =
+                "A recording is still being finished."
+            alert.informativeText =
+                "The recording is still being saved in the background. If you quit now, it will not be added to the transcription queue. Wait a minute or so, then quit."
+        }
+
+        alert.addButton(withTitle: "Keep Open")
+        alert.addButton(withTitle: "Quit Anyway")
+
+        return alert.runModal() == .alertSecondButtonReturn
+            ? .terminateNow
+            : .terminateCancel
+    }
+}
 
 @main
 struct Meeting_TranscriberApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self)
+    private var appDelegate
+
     @StateObject
     private var transcriptionController =
         TranscriptionController()
@@ -51,6 +94,10 @@ struct Meeting_TranscriberApp: App {
                 .environmentObject(
                     appNavigationController
                 )
+                .onAppear {
+                    AppDelegate.recordingController =
+                        recordingController
+                }
                 .task {
                     guard !didRunStartupMaintenance else {
                         return
@@ -69,6 +116,9 @@ struct Meeting_TranscriberApp: App {
                             "Startup retention warning: \(error.localizedDescription)"
                         )
                     }
+
+                    // Best-effort local copy of folders and saved sessions.
+                    try? await BackendService().backupState()
                 }
         }
 

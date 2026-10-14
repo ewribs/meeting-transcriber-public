@@ -220,6 +220,28 @@ def load_meeting_index(
     return meetings
 
 
+def _topic_text(meeting_dir: Path) -> str | None:
+    """Lower-cased topic text for a meeting, or None if unavailable."""
+    memory_path = meeting_dir / "meeting_memory.json"
+
+    if not memory_path.exists():
+        return None
+
+    memory = json.loads(
+        memory_path.read_text(encoding="utf-8")
+    )
+
+    return " ".join(
+        (
+            f"{item.get('topic_key', '')} "
+            f"{item.get('topic', '')} "
+            f"{item.get('summary', '')}"
+        )
+        for item in memory.get("topics", [])
+        if isinstance(item, dict)
+    ).lower()
+
+
 def select_meetings(
     person: str | None = None,
     start_date: str | None = None,
@@ -228,7 +250,17 @@ def select_meetings(
     title: str | None = None,
     archive_dir: Path = ARCHIVE_DIR,
     output_dir: Path = OUTPUT_DIR,
+    people: list[str] | None = None,
+    status: str | None = None,
+    exclude_title: str | None = None,
+    exclude_topic: str | None = None,
 ) -> list[dict]:
+    """Select meetings. Every supplied rule must hold (AND).
+
+    people: match when ANY of these names is a participant.
+    status: "Published" or "Unpublished".
+    exclude_title / exclude_topic: skip meetings that contain the text.
+    """
     meetings = load_meeting_index(
         archive_dir,
         output_dir,
@@ -249,6 +281,16 @@ def select_meetings(
         else None
     )
 
+    wanted_people = {
+        str(name).strip().lower()
+        for name in (people or [])
+        if str(name).strip()
+    }
+
+    wanted_status = (
+        status.strip().casefold() if status else None
+    )
+
     for meeting in meetings:
         if meeting.get("superseded_by"):
             continue
@@ -264,97 +306,65 @@ def select_meetings(
             meeting_datetime
         )
 
-        if (
-            start
-            and meeting_dt < start
-        ):
+        if start and meeting_dt < start:
             continue
 
-        if (
-            end
-            and meeting_dt >= end
-        ):
+        if end and meeting_dt >= end:
             continue
 
-        if person:
-            participants = [
-                name.lower()
-                for name
-                in meeting.get(
-                    "participants",
-                    [],
-                )
-            ]
+        if wanted_status:
+            meeting_status = str(
+                meeting.get("publish_status", "Published")
+            ).casefold()
 
-            if (
-                person.lower()
-                not in participants
-            ):
+            if meeting_status != wanted_status:
                 continue
 
-        if title:
+        participants_lower = [
+            name.lower()
+            for name in meeting.get("participants", [])
+        ]
+
+        if person and person.lower() not in participants_lower:
+            continue
+
+        if wanted_people and not (
+            wanted_people & set(participants_lower)
+        ):
+            continue
+
+        if title or exclude_title:
             title_search_text = " ".join(
                 [
-                    str(
-                        meeting.get(
-                            "display_title",
-                            "",
-                        )
-                    ),
-                    str(
-                        meeting.get(
-                            "meeting_run",
-                            "",
-                        )
-                    ),
+                    str(meeting.get("display_title", "")),
+                    str(meeting.get("meeting_run", "")),
                 ]
             ).lower()
 
+            if title and title.lower() not in title_search_text:
+                continue
+
             if (
-                title.lower()
-                not in title_search_text
+                exclude_title
+                and exclude_title.lower() in title_search_text
             ):
                 continue
 
-        meeting_dir = Path(
-            meeting["location"]
-        )
+        meeting_dir = Path(meeting["location"])
 
-        if topic:
-            memory_path = (
-                meeting_dir
-                / "meeting_memory.json"
-            )
+        if topic or exclude_topic:
+            topic_text = _topic_text(meeting_dir)
 
-            if not memory_path.exists():
+            if topic and (
+                topic_text is None
+                or topic.lower() not in topic_text
+            ):
                 continue
 
-            memory = json.loads(
-                memory_path.read_text(
-                    encoding="utf-8",
-                )
-            )
-
-            topic_text = " ".join(
-                (
-                    f"{item.get('topic_key', '')} "
-                    f"{item.get('topic', '')} "
-                    f"{item.get('summary', '')}"
-                )
-                for item
-                in memory.get(
-                    "topics",
-                    [],
-                )
-                if isinstance(
-                    item,
-                    dict,
-                )
-            ).lower()
-
             if (
-                topic.lower()
-                not in topic_text
+                exclude_topic
+                and topic_text is not None
+                and exclude_topic.lower() in topic_text
             ):
                 continue
 

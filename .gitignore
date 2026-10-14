@@ -31,6 +31,7 @@ release_audit.local.json
 
 # Backfill backups and progress
 backfill_backups/
+local_backups/
 
 # Private local memory benchmark corpus/results
 private_benchmarks/

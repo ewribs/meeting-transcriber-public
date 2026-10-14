@@ -429,7 +429,9 @@ final class RecordingController: ObservableObject {
 
     @Published var isMonitoring = false
     @Published var isRecording = false
-    @Published var isFinalizing = false
+    /// Recordings being encoded to m4a in the background. A new
+    /// recording can start while this is above zero.
+    @Published var finalizingCount = 0
     @Published var meetingName = ""
     @Published var inputName = preferredInputName
     @Published var inputChannels = 0
@@ -446,6 +448,10 @@ final class RecordingController: ObservableObject {
     private let recordingSink = AudioRecordingSink()
     private var elapsedTask: Task<Void, Never>?
     private var pendingOutputURL: URL?
+
+    var isFinalizing: Bool {
+        finalizingCount > 0
+    }
 
     var formatSummary: String {
         guard inputChannels > 0, sampleRate > 0 else {
@@ -528,7 +534,7 @@ final class RecordingController: ObservableObject {
     }
 
     func stopMonitoring() {
-        guard !isRecording, !isFinalizing else {
+        guard !isRecording else {
             return
         }
 
@@ -544,7 +550,7 @@ final class RecordingController: ObservableObject {
     }
 
     func startRecording(recordingsDirectory: String) async {
-        guard !isRecording, !isFinalizing else {
+        guard !isRecording else {
             return
         }
 
@@ -605,9 +611,16 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    func stopRecording() async -> String? {
+    /// Stops the recording and returns immediately. Turning the raw
+    /// capture into a valid m4a can take a minute or more, so that
+    /// runs in the background and a new recording can start right
+    /// away. `onFinalized` is called with the m4a path once it is
+    /// ready and has passed the transcription contract check.
+    func stopRecording(
+        onFinalized: @escaping (String) -> Void
+    ) {
         guard isRecording, let outputURL = pendingOutputURL else {
-            return nil
+            return
         }
 
         let writeError = recordingSink.finish()
@@ -618,48 +631,101 @@ final class RecordingController: ObservableObject {
         if let writeError {
             errorMessage = writeError
             statusText = "Recording stopped, but the raw audio could not be completed."
-            return nil
+            return
         }
 
-        guard let rawCapturePath else {
+        guard let capturePath = rawCapturePath else {
             errorMessage = "The raw recording path was lost before finalization."
             statusText = "Unable to finalize recording."
-            return nil
+            return
         }
 
-        isFinalizing = true
-        statusText = "Finalizing recording…"
-        defer { isFinalizing = false }
+        // Hand everything this job needs to the background task, then
+        // clear the per-recording state so the next meeting can start.
+        let jobSampleRate = Int(sampleRate)
+        let jobChannels = inputChannels
+
+        rawCapturePath = nil
+        meetingName = ""
+        finalizingCount += 1
+        statusText = "Recording stopped. Finalizing in the background…"
+
+        Task {
+            await finalize(
+                capturePath: capturePath,
+                outputURL: outputURL,
+                sampleRate: jobSampleRate,
+                channels: jobChannels,
+                onFinalized: onFinalized
+            )
+        }
+    }
+
+    private func finalize(
+        capturePath: String,
+        outputURL: URL,
+        sampleRate: Int,
+        channels: Int,
+        onFinalized: @escaping (String) -> Void
+    ) async {
+        defer {
+            finalizingCount -= 1
+
+            if finalizingCount == 0, !isRecording,
+               errorMessage == nil {
+                statusText = "Recording saved and added to the transcription queue."
+            }
+        }
 
         do {
             let result = try await BackendService()
                 .finalizeAudioRecording(
-                    sourcePath: rawCapturePath,
+                    sourcePath: capturePath,
                     outputPath: outputURL.path,
-                    sampleRate: Int(sampleRate),
-                    channels: inputChannels
+                    sampleRate: sampleRate,
+                    channels: channels
                 )
 
             guard result.compatible else {
                 try? FileManager.default.removeItem(at: outputURL)
-                errorMessage = result.message
-                statusText = "Recording did not satisfy the existing transcription contract. The recoverable raw capture was kept."
-                return nil
+                reportFinalizeFailure(
+                    result.message,
+                    status: "Recording did not satisfy the existing transcription contract. The recoverable raw capture was kept.",
+                    capturePath: capturePath
+                )
+                return
             }
 
             try? FileManager.default.removeItem(
-                at: URL(fileURLWithPath: rawCapturePath)
+                at: URL(fileURLWithPath: capturePath)
             )
-            self.rawCapturePath = nil
             recordingPath = outputURL.path
-            meetingName = ""
-            statusText = "Recording saved and added to the transcription queue."
-            return outputURL.path
+            onFinalized(outputURL.path)
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
-            errorMessage = error.localizedDescription
-            statusText = "Unable to finalize recording. The recoverable raw capture was kept."
-            return nil
+            reportFinalizeFailure(
+                error.localizedDescription,
+                status: "Unable to finalize recording. The recoverable raw capture was kept.",
+                capturePath: capturePath
+            )
+        }
+    }
+
+    private func reportFinalizeFailure(
+        _ message: String,
+        status: String,
+        capturePath: String
+    ) {
+        // Keep the capture reachable for "Reveal Recovery Capture",
+        // unless a newer recording is using that slot.
+        if rawCapturePath == nil {
+            rawCapturePath = capturePath
+        }
+
+        errorMessage = message
+
+        if !isRecording {
+            statusText = status
         }
     }
 

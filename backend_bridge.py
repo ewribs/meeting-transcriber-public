@@ -367,6 +367,10 @@ def sessions_payload() -> dict[str, Any]:
                 "meeting_count": entry.meeting_count,
                 "turn_count": entry.turn_count,
                 "criteria": criteria_lines,
+                "meeting_runs": [
+                    str(run)
+                    for run in payload.get("meeting_runs", [])
+                ],
                 "path": str(entry.path),
             }
         )
@@ -491,6 +495,10 @@ def session_editor_payload(
             "selected_history_label":
                 DEFAULT_HISTORY_LABEL,
             "custom_range_label": None,
+            "people": [],
+            "status": "",
+            "exclude_title": "",
+            "exclude_topic": "",
         }
 
     from query.sessions import load_chat_session
@@ -524,6 +532,12 @@ def session_editor_payload(
             selected_history_label,
         "custom_range_label":
             custom_range_label,
+        "people": list(criteria.get("people") or []),
+        "status": criteria.get("status") or "",
+        "exclude_title":
+            criteria.get("exclude_title") or "",
+        "exclude_topic":
+            criteria.get("exclude_topic") or "",
     }
 
 
@@ -533,6 +547,7 @@ def create_dynamic_session_payload(
     title_text: str,
     topic_text: str,
     history_label: str,
+    rules_json: str = "",
 ) -> dict[str, Any]:
     from config import ARCHIVE_DIR
     from query.session_context import (
@@ -553,6 +568,13 @@ def create_dynamic_session_payload(
         title_text=title_text,
         topic_text=topic_text,
         history_label=history_label,
+    )
+
+    from session_rules import with_rules
+
+    criteria = with_rules(
+        criteria,
+        _parse_rules_json(rules_json) or {},
     )
 
     if not criteria_present(criteria):
@@ -587,6 +609,7 @@ def edit_dynamic_session_payload(
     title_text: str,
     topic_text: str,
     history_label: str,
+    rules_json: str | None = None,
 ) -> dict[str, Any]:
     from query.session_context import (
         select_session_meetings,
@@ -630,6 +653,16 @@ def edit_dynamic_session_payload(
         ),
     )
 
+    from session_rules import saved_rules, with_rules
+
+    new_rules = _parse_rules_json(rules_json)
+    criteria = with_rules(
+        criteria,
+        saved_rules(saved_criteria)
+        if new_rules is None
+        else new_rules,
+    )
+
     if not criteria_present(criteria):
         raise CriteriaRequiredError(
             "Choose at least one criterion or "
@@ -654,6 +687,288 @@ def edit_dynamic_session_payload(
     }
 
 
+
+
+def _parse_rules_json(
+    rules_json: str | None,
+) -> dict[str, Any] | None:
+    """None when no rules were supplied; {} clears; else the raw rules."""
+    if rules_json is None or not str(rules_json).strip():
+        return None
+
+    try:
+        raw = json.loads(rules_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Rules must be valid JSON.") from exc
+
+    if not isinstance(raw, dict):
+        raise ValueError("Rules must be a JSON object.")
+
+    return raw
+
+
+def preview_criteria_payload(
+    person_text: str,
+    title_text: str,
+    topic_text: str,
+    history_label: str,
+    rules_json: str = "",
+) -> dict[str, Any]:
+    from query.session_context import (
+        select_session_meetings,
+    )
+    from session_criteria_ui import (
+        build_create_criteria,
+        criteria_present,
+    )
+    from session_rules import with_rules
+
+    criteria = with_rules(
+        build_create_criteria(
+            person_text=person_text,
+            title_text=title_text,
+            topic_text=topic_text,
+            history_label=history_label,
+        ),
+        _parse_rules_json(rules_json) or {},
+    )
+
+    if not criteria_present(criteria):
+        return {
+            "schema_version": 12,
+            "match_count": 0,
+            "meetings": [],
+            "has_criteria": False,
+        }
+
+    selected = list(select_session_meetings(criteria))
+    selected.reverse()  # newest first
+
+    return {
+        "schema_version": 12,
+        "match_count": len(selected),
+        "has_criteria": True,
+        "meetings": [
+            {
+                "run": str(item.get("meeting_run", "")),
+                "title": str(item.get("display_title", "")),
+                "participants": list(
+                    item.get("participants", [])
+                ),
+            }
+            for item in selected[:8]
+        ],
+    }
+
+
+def _session_membership_payload(
+    session_name: str,
+    meeting_runs_json: str,
+    *,
+    adding: bool,
+) -> dict[str, Any]:
+    from config import ARCHIVE_DIR
+    from query.sessions import (
+        load_chat_session,
+        save_chat_session,
+    )
+    from session_actions import (
+        SessionAlreadyCurrent,
+        add_meetings_to_fixed_session,
+        remove_meetings_from_fixed_session,
+    )
+
+    try:
+        raw_runs = json.loads(meeting_runs_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Meeting selection contains invalid JSON."
+        ) from exc
+
+    if not isinstance(raw_runs, list):
+        raise ValueError("Meeting selection must be a list.")
+
+    runs = [
+        str(run).strip()
+        for run in raw_runs
+        if str(run).strip()
+    ]
+
+    if not runs:
+        raise ValueError("Select at least one meeting.")
+
+    session = load_chat_session(session_name)
+
+    try:
+        if adding:
+            unavailable = [
+                run
+                for run in runs
+                if not (
+                    (ARCHIVE_DIR / run / "meeting_memory.json")
+                    .exists()
+                )
+            ]
+
+            if unavailable:
+                preview = ", ".join(unavailable[:3])
+                if len(unavailable) > 3:
+                    preview += (
+                        f" and {len(unavailable) - 3} more"
+                    )
+                raise ValueError(
+                    "Sessions need published/archived meetings. "
+                    f"Publish these first: {preview}"
+                )
+
+            summary = add_meetings_to_fixed_session(
+                session_name=session_name,
+                session=session,
+                meeting_dirs=[ARCHIVE_DIR / run for run in runs],
+                save_session=save_chat_session,
+            )
+        else:
+            summary = remove_meetings_from_fixed_session(
+                session_name=session_name,
+                session=session,
+                meeting_runs=runs,
+                save_session=save_chat_session,
+            )
+    except SessionAlreadyCurrent as exc:
+        return {
+            "schema_version": 13,
+            "session_name": session_name,
+            "result": "already_current",
+            "added": 0,
+            "removed": 0,
+            "unchanged": int(exc.unchanged),
+            "meeting_count": len(session.get("meeting_runs", [])),
+        }
+
+    return {
+        "schema_version": 13,
+        "session_name": session_name,
+        "result": "added" if adding else "removed",
+        "added": int(summary.added),
+        "removed": int(summary.removed),
+        "unchanged": int(summary.unchanged),
+        "meeting_count": int(summary.meeting_count),
+    }
+
+
+def add_session_meetings_payload(
+    session_name: str,
+    meeting_runs_json: str,
+) -> dict[str, Any]:
+    return _session_membership_payload(
+        session_name, meeting_runs_json, adding=True
+    )
+
+
+def remove_session_meetings_payload(
+    session_name: str,
+    meeting_runs_json: str,
+) -> dict[str, Any]:
+    return _session_membership_payload(
+        session_name, meeting_runs_json, adding=False
+    )
+
+
+def _folders_file():
+    from config import ARCHIVE_DIR
+
+    return ARCHIVE_DIR / "meeting_folders.json"
+
+
+def _folders_result(folders: list[dict]) -> dict[str, Any]:
+    return {
+        "schema_version": 14,
+        "folders": [
+            {
+                "name": folder["name"],
+                "meeting_runs": list(folder["meeting_runs"]),
+            }
+            for folder in folders
+        ],
+    }
+
+
+def _parse_runs_json(meeting_runs_json: str) -> list[str]:
+    try:
+        raw = json.loads(meeting_runs_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Meeting selection contains invalid JSON."
+        ) from exc
+
+    if not isinstance(raw, list):
+        raise ValueError("Meeting selection must be a list.")
+
+    runs = [str(run).strip() for run in raw if str(run).strip()]
+
+    if not runs:
+        raise ValueError("Select at least one meeting.")
+
+    return runs
+
+
+def folders_payload() -> dict[str, Any]:
+    from meeting_folders import load_folders
+
+    return _folders_result(load_folders(_folders_file()))
+
+
+def create_folder_payload(name: str) -> dict[str, Any]:
+    from meeting_folders import create_folder
+
+    return _folders_result(create_folder(_folders_file(), name))
+
+
+def rename_folder_payload(
+    old_name: str,
+    new_name: str,
+) -> dict[str, Any]:
+    from meeting_folders import rename_folder
+
+    return _folders_result(
+        rename_folder(_folders_file(), old_name, new_name)
+    )
+
+
+def delete_folder_payload(name: str) -> dict[str, Any]:
+    from meeting_folders import delete_folder
+
+    return _folders_result(delete_folder(_folders_file(), name))
+
+
+def add_folder_meetings_payload(
+    name: str,
+    meeting_runs_json: str,
+) -> dict[str, Any]:
+    from meeting_folders import add_meetings
+
+    return _folders_result(
+        add_meetings(
+            _folders_file(),
+            name,
+            _parse_runs_json(meeting_runs_json),
+        )
+    )
+
+
+def remove_folder_meetings_payload(
+    name: str,
+    meeting_runs_json: str,
+) -> dict[str, Any]:
+    from meeting_folders import remove_meetings
+
+    return _folders_result(
+        remove_meetings(
+            _folders_file(),
+            name,
+            _parse_runs_json(meeting_runs_json),
+        )
+    )
 
 
 def meeting_context_payload(
@@ -1637,6 +1952,13 @@ def save_favorite_prompts_payload(
 
 
 
+def backup_state_payload() -> dict[str, Any]:
+    from state_backup import backup_state, default_paths
+
+    archive_dir, backup_root = default_paths()
+    return backup_state(archive_dir, backup_root)
+
+
 def startup_retention_payload() -> dict[str, Any]:
     from startup_maintenance import run_startup_retention
 
@@ -2132,6 +2454,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument("title_text")
     create_parser.add_argument("topic_text")
     create_parser.add_argument("history_label")
+    create_parser.add_argument("rules_json", nargs="?", default="")
 
     edit_parser = subparsers.add_parser(
         "edit-dynamic-session",
@@ -2142,6 +2465,59 @@ def build_parser() -> argparse.ArgumentParser:
     edit_parser.add_argument("title_text")
     edit_parser.add_argument("topic_text")
     edit_parser.add_argument("history_label")
+    edit_parser.add_argument("rules_json", nargs="?", default=None)
+
+    preview_parser = subparsers.add_parser(
+        "preview-criteria",
+        help="Preview which meetings a set of rules would match",
+    )
+    preview_parser.add_argument("person_text")
+    preview_parser.add_argument("title_text")
+    preview_parser.add_argument("topic_text")
+    preview_parser.add_argument("history_label")
+    preview_parser.add_argument("rules_json", nargs="?", default="")
+
+    subparsers.add_parser(
+        "folders",
+        help="List meeting folders",
+    )
+
+    create_folder_parser = subparsers.add_parser(
+        "create-folder", help="Create a meeting folder"
+    )
+    create_folder_parser.add_argument("name")
+
+    rename_folder_parser = subparsers.add_parser(
+        "rename-folder", help="Rename a meeting folder"
+    )
+    rename_folder_parser.add_argument("old_name")
+    rename_folder_parser.add_argument("new_name")
+
+    delete_folder_parser = subparsers.add_parser(
+        "delete-folder",
+        help="Delete a meeting folder (meetings are kept)",
+    )
+    delete_folder_parser.add_argument("name")
+
+    for command_name, help_text in (
+        ("add-folder-meetings", "Add meetings to a folder"),
+        ("remove-folder-meetings", "Remove meetings from a folder"),
+    ):
+        folder_membership_parser = subparsers.add_parser(
+            command_name, help=help_text
+        )
+        folder_membership_parser.add_argument("name")
+        folder_membership_parser.add_argument("meeting_runs_json")
+
+    for command_name, help_text in (
+        ("add-session-meetings", "Add meetings to a fixed session"),
+        ("remove-session-meetings", "Remove meetings from a fixed session"),
+    ):
+        membership_parser = subparsers.add_parser(
+            command_name, help=help_text
+        )
+        membership_parser.add_argument("session_name")
+        membership_parser.add_argument("meeting_runs_json")
 
     meeting_context_parser = subparsers.add_parser(
         "meeting-context",
@@ -2282,6 +2658,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser(
+        "backup-state",
+        help="Back up folders and saved sessions to the local disk",
+    )
+
+    subparsers.add_parser(
         "startup-retention",
         help="Apply configured audio retention for app startup",
     )
@@ -2417,6 +2798,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.title_text,
                 args.topic_text,
                 args.history_label,
+                args.rules_json,
             )
 
         elif args.command == "edit-dynamic-session":
@@ -2426,6 +2808,52 @@ def main(argv: list[str] | None = None) -> int:
                 args.title_text,
                 args.topic_text,
                 args.history_label,
+                args.rules_json,
+            )
+
+        elif args.command == "preview-criteria":
+            payload = preview_criteria_payload(
+                args.person_text,
+                args.title_text,
+                args.topic_text,
+                args.history_label,
+                args.rules_json,
+            )
+
+        elif args.command == "folders":
+            payload = folders_payload()
+
+        elif args.command == "create-folder":
+            payload = create_folder_payload(args.name)
+
+        elif args.command == "rename-folder":
+            payload = rename_folder_payload(
+                args.old_name, args.new_name
+            )
+
+        elif args.command == "delete-folder":
+            payload = delete_folder_payload(args.name)
+
+        elif args.command == "add-folder-meetings":
+            payload = add_folder_meetings_payload(
+                args.name, args.meeting_runs_json
+            )
+
+        elif args.command == "remove-folder-meetings":
+            payload = remove_folder_meetings_payload(
+                args.name, args.meeting_runs_json
+            )
+
+        elif args.command == "add-session-meetings":
+            payload = add_session_meetings_payload(
+                args.session_name,
+                args.meeting_runs_json,
+            )
+
+        elif args.command == "remove-session-meetings":
+            payload = remove_session_meetings_payload(
+                args.session_name,
+                args.meeting_runs_json,
             )
 
         elif args.command == "meeting-context":
@@ -2500,6 +2928,9 @@ def main(argv: list[str] | None = None) -> int:
             payload = save_favorite_prompts_payload(
                 args.favorites_json
             )
+
+        elif args.command == "backup-state":
+            payload = backup_state_payload()
 
         elif args.command == "startup-retention":
             payload = startup_retention_payload()

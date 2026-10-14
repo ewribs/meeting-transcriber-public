@@ -69,8 +69,12 @@ def session_name_exists(
 def validate_criteria(criteria: Mapping) -> None:
     fields = (
         "person",
+        "people",
         "title",
         "topic",
+        "status",
+        "exclude_title",
+        "exclude_topic",
         "history_days",
         "start_date",
         "end_date",
@@ -246,3 +250,86 @@ def save_fixed_session(
 
     save_session(name, list(meeting_dirs), list(history), None)
     return name
+
+
+def _require_fixed(session: Mapping) -> None:
+    if session.get("selection_criteria"):
+        raise FixedSessionError(
+            "This is a dynamic session. Edit its rules instead of "
+            "adding or removing meetings by hand."
+        )
+
+
+def add_meetings_to_fixed_session(
+    *,
+    session_name: str,
+    session: Mapping,
+    meeting_dirs: Sequence[Path],
+    save_session: Callable,
+) -> SessionChangeSummary:
+    """Add meetings to a fixed session, keeping its conversation history."""
+    _require_fixed(session)
+
+    old_runs = [str(run) for run in session.get("meeting_runs", [])]
+    seen = set(old_runs)
+    new_dirs: list[Path] = []
+
+    for meeting_dir in meeting_dirs:
+        path = Path(meeting_dir)
+        if path.name and path.name not in seen:
+            seen.add(path.name)
+            new_dirs.append(path)
+
+    if not new_dirs:
+        raise SessionAlreadyCurrent(len(old_runs))
+
+    all_dirs = [Path(run) for run in old_runs] + new_dirs
+    save_session(
+        session_name,
+        all_dirs,
+        list(session.get("conversation_history", [])),
+        None,
+    )
+    return SessionChangeSummary(
+        added=len(new_dirs),
+        removed=0,
+        unchanged=len(old_runs),
+        meeting_count=len(all_dirs),
+    )
+
+
+def remove_meetings_from_fixed_session(
+    *,
+    session_name: str,
+    session: Mapping,
+    meeting_runs: Sequence[str],
+    save_session: Callable,
+) -> SessionChangeSummary:
+    """Remove meetings from a fixed session, keeping its conversation history."""
+    _require_fixed(session)
+
+    old_runs = [str(run) for run in session.get("meeting_runs", [])]
+    drop = {str(run).strip() for run in meeting_runs}
+    kept = [run for run in old_runs if run not in drop]
+    removed = len(old_runs) - len(kept)
+
+    if removed == 0:
+        raise SessionAlreadyCurrent(len(old_runs))
+    if not kept:
+        raise SessionActionError(
+            "A session needs at least one meeting. "
+            "Delete the session instead."
+        )
+
+    save_session(
+        session_name,
+        [Path(run) for run in kept],
+        list(session.get("conversation_history", [])),
+        None,
+    )
+    return SessionChangeSummary(
+        added=0,
+        removed=removed,
+        unchanged=len(kept),
+        meeting_count=len(kept),
+    )
