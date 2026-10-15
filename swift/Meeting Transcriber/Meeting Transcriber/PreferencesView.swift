@@ -1,36 +1,14 @@
 import AppKit
 import SwiftUI
 
+private enum PreferencesTab: String {
+    case storage
+    case localAI
+    case meetings
+}
+
 struct PreferencesView: View {
-    @AppStorage("meetings.recentDays")
-    private var recentDays = 14
-
-    @AppStorage("meetings.sortOrder")
-    private var sortOrderRaw = "newest"
-
-    @AppStorage("meetings.density")
-    private var densityRaw = "normal"
-
-    @AppStorage("meetings.railSort")
-    private var railSortRaw = "alpha"
-
-    @AppStorage("meetings.showRecentRow")
-    private var showRecentRow = true
-
-    @AppStorage("meetings.showUnpublishedRow")
-    private var showUnpublishedRow = true
-
-    @AppStorage("meetings.showUnfiledRow")
-    private var showUnfiledRow = true
-
-    @AppStorage("meetings.showNotices")
-    private var showNotices = true
-
-    @AppStorage("meetings.confirmFolderDelete")
-    private var confirmFolderDelete = true
-
-    @AppStorage("ask.showFavorites")
-    private var showFavorites = true
+    @State private var selectedTab: PreferencesTab = .storage
 
     @State private var performanceProfile =
         "Auto"
@@ -124,70 +102,173 @@ struct PreferencesView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            TabView(selection: $selectedTab) {
+                storageTab
+                    .tabItem {
+                        Label("Storage", systemImage: "externaldrive")
+                    }
+                    .tag(PreferencesTab.storage)
+
+                localAITab
+                    .tabItem {
+                        Label("Local AI", systemImage: "cpu")
+                    }
+                    .tag(PreferencesTab.localAI)
+
+                MeetingsPreferencesTab()
+                    .tabItem {
+                        Label("Meetings", systemImage: "list.bullet.rectangle")
+                    }
+                    .tag(PreferencesTab.meetings)
+            }
+
+            if selectedTab != .meetings {
+                bottomBar
+            }
+        }
+        .padding(12)
+        .frame(
+            width: 720,
+            height: 720
+        )
+        .onChange(of: llmBackend) { _, _ in
+            Task {
+                await refreshResolvedBackendPreview()
+            }
+        }
+        .onChange(of: performanceProfile) { _, _ in
+            Task {
+                await refreshResolvedRuntimePreview()
+            }
+        }
+        .onChange(of: llmContextSize) { _, _ in
+            Task {
+                await refreshResolvedRuntimePreview()
+            }
+        }
+        .task {
+            await loadPreferences(
+                preserveEdits:
+                    false
+            )
+        }
+        .alert(
+            "Preferences Saved",
+            isPresented: Binding(
+                get: {
+                    savedMessage != nil
+                },
+                set: { showing in
+                    if !showing {
+                        savedMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button(
+                "OK",
+                role: .cancel
+            ) {
+                savedMessage = nil
+            }
+        } message: {
+            Text(
+                savedMessage ?? ""
+            )
+        }
+    }
+
+
+    private var storageTab: some View {
         Form {
-            Section("Storage") {
+            Section("Folders") {
                 pathRow(
-                    label:
-                        "Working folder",
-                    value:
-                        $outputDir,
-                    buttonTitle:
-                        "Choose…"
+                    label: "Recordings folder",
+                    value: $recordingsDir,
+                    buttonTitle: "Choose…"
                 ) {
-                    chooseFolder(
-                        binding:
-                            $outputDir
-                    )
+                    chooseFolder(binding: $recordingsDir)
+                }
+
+                Text("Add Recordings… opens here by default. You can still browse elsewhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                pathRow(
+                    label: "Working folder",
+                    value: $outputDir,
+                    buttonTitle: "Choose…"
+                ) {
+                    chooseFolder(binding: $outputDir)
                 }
 
                 pathRow(
-                    label:
-                        "Archive folder",
-                    value:
-                        $archiveDir,
-                    buttonTitle:
-                        "Choose…"
+                    label: "Archive folder",
+                    value: $archiveDir,
+                    buttonTitle: "Choose…"
                 ) {
-                    chooseFolder(
-                        binding:
-                            $archiveDir
-                    )
+                    chooseFolder(binding: $archiveDir)
                 }
 
-                pathRow(
-                    label:
-                        "Recordings folder",
-                    value:
-                        $recordingsDir,
-                    buttonTitle:
-                        "Choose…"
-                ) {
-                    chooseFolder(
-                        binding:
-                            $recordingsDir
-                    )
-                }
-
-                Text(
-                    "Add Recordings… opens here by default. You can still browse elsewhere."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                LabeledContent(
-                    "Archive status"
-                ) {
+                LabeledContent("Archive status") {
                     Text(archiveStatus)
                         .foregroundStyle(
-                            archiveStatus
-                                == "Available"
+                            archiveStatus == "Available"
                                 ? .green
                                 : .secondary
                         )
                 }
             }
 
-            Section("Local AI") {
+            Section("Recording Retention") {
+                Stepper(
+                    value:
+                        $m4aRetentionDays,
+                    in: 0...3650
+                ) {
+                    LabeledContent(
+                        "Local M4A retention"
+                    ) {
+                        Text(
+                            retentionText(
+                                m4aRetentionDays
+                            )
+                        )
+                    }
+                }
+
+                Stepper(
+                    value:
+                        $archivedM4aRetentionDays,
+                    in: 0...3650
+                ) {
+                    LabeledContent(
+                        "Archived M4A retention"
+                    ) {
+                        Text(
+                            retentionText(
+                                archivedM4aRetentionDays
+                            )
+                        )
+                    }
+                }
+
+                Text(
+                    "0 days means Forever for archived recordings."
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    .secondary
+                )
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var localAITab: some View {
+        Form {
+            Section("AI Engine") {
                 Picker(
                     "AI backend",
                     selection: $llmBackend
@@ -263,7 +344,7 @@ struct PreferencesView: View {
                 }
 
                 LabeledContent(
-                    "Backend/model status"
+                    "Model status"
                 ) {
                     Text(effectiveModelStatus)
                         .foregroundStyle(
@@ -274,6 +355,9 @@ struct PreferencesView: View {
                         )
                 }
 
+            }
+
+            Section("Performance") {
                 Picker(
                     "Performance profile",
                     selection:
@@ -376,6 +460,9 @@ struct PreferencesView: View {
                         )
                 }
 
+            }
+
+            Section("Advanced") {
                 Picker(
                     "Context override",
                     selection:
@@ -400,223 +487,46 @@ struct PreferencesView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-
-            Section("Meetings") {
-                Stepper(
-                    value: $recentDays,
-                    in: 1...365
-                ) {
-                    LabeledContent(
-                        "“Recent” covers the last"
-                    ) {
-                        Text(
-                            recentDays == 1
-                                ? "1 day"
-                                : String(recentDays) + " days"
-                        )
-                    }
-                }
-
-                Picker(
-                    "List density",
-                    selection: $densityRaw
-                ) {
-                    ForEach(MeetingDensity.allCases) { option in
-                        Text(option.label).tag(option.rawValue)
-                    }
-                }
-
-                Picker(
-                    "Sort meetings by",
-                    selection: $sortOrderRaw
-                ) {
-                    ForEach(MeetingSortOrder.allCases) { order in
-                        Text(order.label).tag(order.rawValue)
-                    }
-                }
-
-                Text(
-                    "The Recent window and the sort order apply immediately. The sort order can also be changed from the arrows button above the meeting list."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Section("Meetings Sidebar") {
-                Toggle("Show Recent", isOn: $showRecentRow)
-                Toggle("Show Unpublished", isOn: $showUnpublishedRow)
-                Toggle("Show Not in a Folder", isOn: $showUnfiledRow)
-
-                Picker(
-                    "Sort folders and sessions",
-                    selection: $railSortRaw
-                ) {
-                    ForEach(RailSortOrder.allCases) { order in
-                        Text(order.label).tag(order.rawValue)
-                    }
-                }
-            }
-
-            Section("Behavior") {
-                Toggle(
-                    "Show notices (already added, session refreshed)",
-                    isOn: $showNotices
-                )
-
-                Toggle(
-                    "Confirm before deleting a folder",
-                    isOn: $confirmFolderDelete
-                )
-
-                Toggle(
-                    "Show prompt favorites in the Ask tab",
-                    isOn: $showFavorites
-                )
-            }
-
-            Section("Audio Retention") {
-                Stepper(
-                    value:
-                        $m4aRetentionDays,
-                    in: 0...3650
-                ) {
-                    LabeledContent(
-                        "Local M4A retention"
-                    ) {
-                        Text(
-                            retentionText(
-                                m4aRetentionDays
-                            )
-                        )
-                    }
-                }
-
-                Stepper(
-                    value:
-                        $archivedM4aRetentionDays,
-                    in: 0...3650
-                ) {
-                    LabeledContent(
-                        "Archived M4A retention"
-                    ) {
-                        Text(
-                            retentionText(
-                                archivedM4aRetentionDays
-                            )
-                        )
-                    }
-                }
-
-                Text(
-                    "0 days means Forever for archived recordings."
-                )
-                .font(.caption)
-                .foregroundStyle(
-                    .secondary
-                )
-            }
-
-            if let errorMessage {
-                Section {
-                    Text(errorMessage)
-                        .foregroundStyle(.red)
-                        .textSelection(
-                            .enabled
-                        )
-                }
-            }
-
-            Section {
-                HStack {
-                    if isLoading
-                        || isSaving {
-                        ProgressView()
-                            .controlSize(
-                                .small
-                            )
-                    }
-
-                    Spacer()
-
-                    Button("Reload") {
-                        Task {
-                            await loadPreferences(
-                                preserveEdits:
-                                    false
-                            )
-                        }
-                    }
-                    .disabled(
-                        isLoading
-                        || isSaving
-                    )
-
-                    Button("Save") {
-                        Task {
-                            await save()
-                        }
-                    }
-                    .buttonStyle(
-                        .borderedProminent
-                    )
-                    .disabled(
-                        isLoading
-                        || isSaving
-                    )
-                }
-            }
         }
         .formStyle(.grouped)
-        .padding(12)
-        .frame(
-            width: 720,
-            height: 720
-        )
-        .onChange(of: llmBackend) { _, _ in
-            Task {
-                await refreshResolvedBackendPreview()
+    }
+
+    private var bottomBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
-        }
-        .onChange(of: performanceProfile) { _, _ in
-            Task {
-                await refreshResolvedRuntimePreview()
-            }
-        }
-        .onChange(of: llmContextSize) { _, _ in
-            Task {
-                await refreshResolvedRuntimePreview()
-            }
-        }
-        .task {
-            await loadPreferences(
-                preserveEdits:
-                    false
-            )
-        }
-        .alert(
-            "Preferences Saved",
-            isPresented: Binding(
-                get: {
-                    savedMessage != nil
-                },
-                set: { showing in
-                    if !showing {
-                        savedMessage = nil
+
+            HStack {
+                if isLoading || isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Spacer()
+
+                Button("Reload") {
+                    Task {
+                        await loadPreferences(
+                            preserveEdits: false
+                        )
                     }
                 }
-            )
-        ) {
-            Button(
-                "OK",
-                role: .cancel
-            ) {
-                savedMessage = nil
+                .disabled(isLoading || isSaving)
+
+                Button("Save") {
+                    Task {
+                        await save()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isLoading || isSaving)
             }
-        } message: {
-            Text(
-                savedMessage ?? ""
-            )
         }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
     }
 
     @ViewBuilder
