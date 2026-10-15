@@ -110,6 +110,8 @@ struct MeetingsView: View {
     @AppStorage("meetings.recentDays") var recentDays = 14
     @AppStorage("meetings.sortOrder") var sortOrderRaw = "newest"
     @AppStorage("meetings.groupBy") var groupByRaw = "none"
+    @AppStorage("meetings.railSort") var railSortRaw = "alpha"
+    @State var sessionOrder = SessionOrder.empty
     @AppStorage("meetings.showRecentRow") var showRecentRow = true
     @AppStorage("meetings.showUnpublishedRow") var showUnpublishedRow = true
     @AppStorage("meetings.showUnfiledRow") var showUnfiledRow = true

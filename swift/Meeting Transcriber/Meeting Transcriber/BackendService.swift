@@ -381,13 +381,25 @@ nonisolated struct BackendService: Sendable {
     }
 
     func globalSearch(
-        query: String
+        query: String,
+        scopeKind: String = "",
+        scopeName: String = ""
     ) async throws -> GlobalSearchResponse {
+        var arguments: [String] = [
+            "global-search",
+            query,
+        ]
+
+        if scopeKind == "folder" {
+            arguments.append("--scope-folder")
+            arguments.append(scopeName)
+        } else if scopeKind == "session" {
+            arguments.append("--scope-session")
+            arguments.append(scopeName)
+        }
+
         let data = try await runBridge(
-            arguments: [
-                "global-search",
-                query,
-            ]
+            arguments: arguments
         )
 
         do {
@@ -1084,6 +1096,59 @@ nonisolated struct BackendService: Sendable {
         do {
             return try JSONDecoder().decode(
                 SessionMembershipResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func reorderFolders(
+        names: [String]
+    ) async throws -> [MeetingFolder] {
+        let json: String = try Self.jsonList(names)
+        return try await runFolderCommand(
+            ["reorder-folders", json]
+        )
+    }
+
+    func loadSessionOrder() async throws -> SessionOrder {
+        try await runSessionOrderCommand(["session-order"])
+    }
+
+    func saveSessionOrder(
+        kind: String,
+        names: [String]
+    ) async throws -> SessionOrder {
+        let json: String = try Self.jsonList(names)
+        return try await runSessionOrderCommand(
+            ["save-session-order", kind, json]
+        )
+    }
+
+    private static func jsonList(
+        _ names: [String]
+    ) throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: names
+        )
+
+        return String(data: data, encoding: .utf8) ?? "[]"
+    }
+
+    private func runSessionOrderCommand(
+        _ arguments: [String]
+    ) async throws -> SessionOrder {
+        let data = try await runBridge(
+            arguments: arguments
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                SessionOrder.self,
                 from: data
             )
         } catch {

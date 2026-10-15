@@ -157,6 +157,33 @@ def delete_folder(path: Path, name: str) -> list[dict]:
     return folders
 
 
+def reorder_folders(path: Path, names: Iterable[str]) -> list[dict]:
+    """Put folders in the given order. Names not listed keep their relative
+    order after the listed ones; unknown names are ignored."""
+    folders = load_folders(path)
+    by_key = {folder["name"].casefold(): folder for folder in folders}
+
+    ordered: list[dict] = []
+    seen: set[str] = set()
+
+    for name in names:
+        key = str(name).strip().casefold()
+        folder = by_key.get(key)
+
+        if folder is not None and key not in seen:
+            ordered.append(folder)
+            seen.add(key)
+
+    ordered.extend(
+        folder for folder in folders if folder["name"].casefold() not in seen
+    )
+
+    if ordered != folders:
+        _save(path, ordered)
+
+    return ordered
+
+
 def add_meetings(path: Path, name: str, runs: Iterable[str]) -> list[dict]:
     folders = load_folders(path)
     folder = _find(folders, name)

@@ -146,7 +146,7 @@ extension MeetingsView {
             alignment: .leading,
             spacing: 2
         ) {
-            railHeader("LIBRARY")
+            libraryHeader
 
             takeOutOfFoldersTarget(
                 key: "all",
@@ -243,7 +243,7 @@ extension MeetingsView {
                 railEmptyNote("No folders yet")
             }
 
-            ForEach(folders) { folder in
+            ForEach(railSort.sorted(folders, name: { $0.name })) { folder in
                 folderRow(folder, knownRuns: knownRuns)
             }
         }
@@ -294,13 +294,32 @@ extension MeetingsView {
                 }
             }
         }
+        .draggable(
+            railOrderPayload(kind: "folder", name: folder.name)
+        ) {
+            Text(folder.name).font(.callout)
+        }
         .dropDestination(
             for: String.self
         ) { runs, _ in
+            if handleRailOrderDrop(
+                runs,
+                kind: "folder",
+                onto: folder.name
+            ) {
+                return true
+            }
+
+            let dropped: [String] = droppedRuns(runs)
+
+            if dropped.isEmpty {
+                return false
+            }
+
             Task {
                 await addRunsToFolder(
                     folder.name,
-                    droppedRuns(runs)
+                    dropped
                 )
             }
 
@@ -331,7 +350,13 @@ extension MeetingsView {
                 railEmptyNote("No dynamic sessions yet")
             }
 
-            ForEach(sessions) { session in
+            ForEach(
+                railSort.sorted(
+                    sessions,
+                    name: { $0.name },
+                    manualOrder: sessionOrder.dynamic
+                )
+            ) { session in
                 dynamicSessionRow(session)
             }
         }
@@ -340,13 +365,32 @@ extension MeetingsView {
     func dynamicSessionRow(
         _ session: SavedSession
     ) -> some View {
-        railRow(
+        let key: String = "session:" + session.name
+
+        return railRow(
             title: session.name,
             icon: "sparkle.magnifyingglass",
             count: session.meetingCount,
-            isSelected: sessionFilterName == session.name
+            isSelected: sessionFilterName == session.name,
+            isDropTarget: dropTargetKey == key
         ) {
             selectLibrary(.session(session.name))
+        }
+        .draggable(
+            railOrderPayload(kind: "dynamic", name: session.name)
+        ) {
+            Text(session.name).font(.callout)
+        }
+        .dropDestination(
+            for: String.self
+        ) { items, _ in
+            handleRailOrderDrop(
+                items,
+                kind: "dynamic",
+                onto: session.name
+            )
+        } isTargeted: { targeted in
+            setDropTarget(key, targeted)
         }
         .contextMenu {
             sessionMenu(for: session)
@@ -373,7 +417,13 @@ extension MeetingsView {
                 railEmptyNote("No fixed sessions yet")
             }
 
-            ForEach(sessions) { session in
+            ForEach(
+                railSort.sorted(
+                    sessions,
+                    name: { $0.name },
+                    manualOrder: sessionOrder.fixed
+                )
+            ) { session in
                 fixedSessionRow(session)
             }
         }
@@ -393,12 +443,31 @@ extension MeetingsView {
         ) {
             selectLibrary(.session(session.name))
         }
+        .draggable(
+            railOrderPayload(kind: "fixed", name: session.name)
+        ) {
+            Text(session.name).font(.callout)
+        }
         .dropDestination(
             for: String.self
         ) { runs, _ in
+            if handleRailOrderDrop(
+                runs,
+                kind: "fixed",
+                onto: session.name
+            ) {
+                return true
+            }
+
+            let dropped: [String] = droppedRuns(runs)
+
+            if dropped.isEmpty {
+                return false
+            }
+
             Task {
                 await addDroppedRuns(
-                    droppedRuns(runs),
+                    dropped,
                     toSession: session.name
                 )
             }
@@ -580,9 +649,11 @@ extension MeetingsView {
     func droppedRuns(
         _ payloads: [String]
     ) -> [String] {
-        payloads.flatMap {
-            $0.split(separator: "\n").map(String.init)
-        }
+        payloads
+            .filter { !$0.hasPrefix(Self.railOrderPrefix) }
+            .flatMap {
+                $0.split(separator: "\n").map(String.init)
+            }
     }
 
     @ViewBuilder
@@ -606,6 +677,38 @@ extension MeetingsView {
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.accentColor.opacity(0.25))
         )
+    }
+
+    var railSort: RailSortOrder {
+        RailSortOrder(rawValue: railSortRaw) ?? .alpha
+    }
+
+    var libraryHeader: some View {
+        HStack {
+            railHeader("LIBRARY")
+
+            Spacer()
+
+            Menu {
+                Picker(
+                    "Sort folders and sessions",
+                    selection: $railSortRaw
+                ) {
+                    ForEach(RailSortOrder.allCases) { order in
+                        Text(order.label).tag(order.rawValue)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort folders and sessions")
+            .padding(.top, 10)
+            .padding(.trailing, 6)
+        }
     }
 
     func railHeaderWithAdd(

@@ -11,6 +11,9 @@ struct PreferencesView: View {
     @AppStorage("meetings.density")
     private var densityRaw = "normal"
 
+    @AppStorage("meetings.railSort")
+    private var railSortRaw = "alpha"
+
     @AppStorage("meetings.showRecentRow")
     private var showRecentRow = true
 
@@ -443,6 +446,15 @@ struct PreferencesView: View {
                 Toggle("Show Recent", isOn: $showRecentRow)
                 Toggle("Show Unpublished", isOn: $showUnpublishedRow)
                 Toggle("Show Not in a Folder", isOn: $showUnfiledRow)
+
+                Picker(
+                    "Sort folders and sessions",
+                    selection: $railSortRaw
+                ) {
+                    ForEach(RailSortOrder.allCases) { order in
+                        Text(order.label).tag(order.rawValue)
+                    }
+                }
             }
 
             Section("Behavior") {

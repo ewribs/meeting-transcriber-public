@@ -291,6 +291,10 @@ extension MeetingsView {
         if let loadedFolders = try? await backend.loadFolders() {
             folders = loadedFolders
         }
+
+        if let loadedOrder = try? await backend.loadSessionOrder() {
+            sessionOrder = loadedOrder
+        }
     }
 
     @MainActor

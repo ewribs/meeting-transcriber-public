@@ -28,6 +28,10 @@ final class AppNavigationController: ObservableObject {
     @Published var workspace: Workspace? = .transcribe
 
     @Published var searchQuery = ""
+    /// "" searches everything; "folder" or "session" limits the search
+    /// to the meetings in the named folder or session.
+    @Published var searchScopeKind = ""
+    @Published var searchScopeName = ""
     @Published var searchResponse: GlobalSearchResponse?
     @Published var searchSelectedResultID: GlobalSearchResult.ID?
 

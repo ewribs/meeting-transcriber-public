@@ -920,6 +920,59 @@ def folders_payload() -> dict[str, Any]:
     return _folders_result(load_folders(_folders_file()))
 
 
+def reorder_folders_payload(names_json: str) -> dict[str, Any]:
+    from meeting_folders import reorder_folders
+
+    try:
+        names = json.loads(names_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Folder order contains invalid JSON.") from exc
+
+    if not isinstance(names, list):
+        raise ValueError("Folder order must be a list.")
+
+    return _folders_result(reorder_folders(_folders_file(), names))
+
+
+def _session_order_file():
+    from config import ARCHIVE_DIR
+
+    return ARCHIVE_DIR / "sidebar_order.json"
+
+
+def _session_order_result(order: dict[str, list[str]]) -> dict[str, Any]:
+    return {
+        "schema_version": 18,
+        "dynamic": list(order.get("dynamic", [])),
+        "fixed": list(order.get("fixed", [])),
+    }
+
+
+def session_order_payload() -> dict[str, Any]:
+    from sidebar_order import load_order
+
+    return _session_order_result(load_order(_session_order_file()))
+
+
+def save_session_order_payload(
+    kind: str,
+    names_json: str,
+) -> dict[str, Any]:
+    from sidebar_order import save_order
+
+    try:
+        names = json.loads(names_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Session order contains invalid JSON.") from exc
+
+    if not isinstance(names, list):
+        raise ValueError("Session order must be a list.")
+
+    return _session_order_result(
+        save_order(_session_order_file(), kind, names)
+    )
+
+
 def create_folder_payload(name: str) -> dict[str, Any]:
     from meeting_folders import create_folder
 
@@ -1891,21 +1944,69 @@ def session_changes_payload(
 
 
 
-def global_search_payload(query: str) -> dict[str, Any]:
+def _search_scope_runs(
+    folder_name: str,
+    session_name: str,
+) -> set[str] | None:
+    """Meeting runs a scoped search may look at; None means everything."""
+    folder_name = (folder_name or "").strip()
+    session_name = (session_name or "").strip()
+
+    if folder_name:
+        from meeting_folders import load_folders
+
+        for folder in load_folders(_folders_file()):
+            if folder["name"] == folder_name:
+                return set(folder["meeting_runs"])
+
+        raise ValueError(f"No folder named {folder_name!r}.")
+
+    if session_name:
+        from query.sessions import load_chat_session
+
+        session = load_chat_session(session_name)
+        return {
+            str(run) for run in session.get("meeting_runs", [])
+        }
+
+    return None
+
+
+def global_search_payload(
+    query: str,
+    scope_folder: str = "",
+    scope_session: str = "",
+) -> dict[str, Any]:
     from config import ARCHIVE_DIR
     from global_search import global_search
 
+    catalog = load_meeting_catalog()
+    scope_runs = _search_scope_runs(scope_folder, scope_session)
+
+    if scope_runs is not None:
+        catalog = [
+            meeting
+            for meeting in catalog
+            if str(
+                meeting.get("meeting_run") or meeting.get("run") or ""
+            ) in scope_runs
+        ]
+
     results = global_search(
         query,
-        load_meeting_catalog(),
+        catalog,
         ARCHIVE_DIR / "query_sessions",
     )
+
+    # A scoped search looks inside meetings only; sessions are not
+    # themselves members of a folder or another session.
+    sessions = [] if scope_runs is not None else results["sessions"]
 
     return {
         "schema_version": 17,
         "query": query.strip(),
         "meetings": results["meetings"],
-        "sessions": results["sessions"],
+        "sessions": sessions,
     }
 
 
@@ -2484,6 +2585,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="List meeting folders",
     )
 
+    reorder_folders_parser = subparsers.add_parser(
+        "reorder-folders",
+        help="Save the order of the meeting folders",
+    )
+    reorder_folders_parser.add_argument("names_json")
+
+    subparsers.add_parser(
+        "session-order",
+        help="Return the manual sidebar order of sessions",
+    )
+
+    save_session_order_parser = subparsers.add_parser(
+        "save-session-order",
+        help="Save the manual sidebar order of one kind of session",
+    )
+    save_session_order_parser.add_argument("kind")
+    save_session_order_parser.add_argument("names_json")
+
     create_folder_parser = subparsers.add_parser(
         "create-folder", help="Create a meeting folder"
     )
@@ -2629,6 +2748,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search Meetings and Sessions without invoking the LLM",
     )
     global_search_parser.add_argument("query")
+    global_search_parser.add_argument(
+        "--scope-folder",
+        default="",
+        help="Only search meetings in this folder",
+    )
+    global_search_parser.add_argument(
+        "--scope-session",
+        default="",
+        help="Only search meetings in this session",
+    )
 
     audio_contract_parser = subparsers.add_parser(
         "audio-contract",
@@ -2825,6 +2954,18 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "folders":
             payload = folders_payload()
 
+        elif args.command == "reorder-folders":
+            payload = reorder_folders_payload(args.names_json)
+
+        elif args.command == "session-order":
+            payload = session_order_payload()
+
+        elif args.command == "save-session-order":
+            payload = save_session_order_payload(
+                args.kind,
+                args.names_json,
+            )
+
         elif args.command == "create-folder":
             payload = create_folder_payload(args.name)
 
@@ -2907,7 +3048,9 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "global-search":
             payload = global_search_payload(
-                args.query
+                args.query,
+                args.scope_folder,
+                args.scope_session,
             )
 
         elif args.command == "audio-contract":

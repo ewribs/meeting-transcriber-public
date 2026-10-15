@@ -30,6 +30,7 @@ from typing import Any
 
 KEEP_SNAPSHOTS = 20
 FOLDERS_NAME = "meeting_folders.json"
+ORDER_NAME = "sidebar_order.json"
 SESSIONS_NAME = "query_sessions"
 MANIFEST_NAME = "manifest.json"
 
@@ -41,6 +42,10 @@ def _source_files(archive_dir: Path) -> dict[str, Path]:
     folders = archive_dir / FOLDERS_NAME
     if folders.is_file():
         files[FOLDERS_NAME] = folders
+
+    order = archive_dir / ORDER_NAME
+    if order.is_file():
+        files[ORDER_NAME] = order
 
     sessions = archive_dir / SESSIONS_NAME
     if sessions.is_dir():

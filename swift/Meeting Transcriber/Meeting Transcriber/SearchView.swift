@@ -6,6 +6,8 @@ struct SearchView: View {
 
     @State private var isSearching = false
     @State private var errorMessage: String?
+    @State private var scopeFolderNames: [String] = []
+    @State private var scopeSessionNames: [String] = []
 
     @State private var meetingDetail: MeetingDetail?
     @State private var sessionDetail: SessionDetail?
@@ -65,6 +67,79 @@ struct SearchView: View {
         .task(id: navigation.searchSelectedResultID) {
             await loadSelectedDetail()
         }
+        .task {
+            await loadScopeChoices()
+        }
+    }
+
+    // MARK: - Search scope
+
+    private var scopeLabel: String {
+        if navigation.searchScopeKind == "folder" {
+            return "In folder: " + navigation.searchScopeName
+        }
+
+        if navigation.searchScopeKind == "session" {
+            return "In session: " + navigation.searchScopeName
+        }
+
+        return "Searching everything"
+    }
+
+    private var scopeMenu: some View {
+        Menu {
+            Button("Everything") {
+                setScope(kind: "", name: "")
+            }
+
+            if !scopeFolderNames.isEmpty {
+                Section("Folders") {
+                    ForEach(scopeFolderNames, id: \.self) { name in
+                        Button(name) {
+                            setScope(kind: "folder", name: name)
+                        }
+                    }
+                }
+            }
+
+            if !scopeSessionNames.isEmpty {
+                Section("Sessions") {
+                    ForEach(scopeSessionNames, id: \.self) { name in
+                        Button(name) {
+                            setScope(kind: "session", name: name)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(scopeLabel, systemImage: "scope")
+                .font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func setScope(kind: String, name: String) {
+        navigation.searchScopeKind = kind
+        navigation.searchScopeName = name
+
+        let hasQuery: Bool = !navigation.searchQuery
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+
+        if hasQuery {
+            Task { await runSearch() }
+        }
+    }
+
+    private func loadScopeChoices() async {
+        if let folders = try? await backend.loadFolders() {
+            scopeFolderNames = folders.map { $0.name }
+        }
+
+        if let sessions = try? await backend.loadSessions() {
+            scopeSessionNames = sessions.map { $0.name }
+        }
     }
 
     private var resultsPane: some View {
@@ -90,6 +165,8 @@ struct SearchView: View {
                         ).isEmpty || isSearching
                     )
                 }
+
+                scopeMenu
 
                 if isSearching {
                     HStack(spacing: 8) {
@@ -351,7 +428,9 @@ struct SearchView: View {
 
         do {
             let result = try await backend.globalSearch(
-                query: cleaned
+                query: cleaned,
+                scopeKind: navigation.searchScopeKind,
+                scopeName: navigation.searchScopeName
             )
             navigation.searchResponse = result
 
