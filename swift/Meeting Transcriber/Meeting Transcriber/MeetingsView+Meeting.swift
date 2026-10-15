@@ -754,6 +754,25 @@ extension MeetingsView {
         sessionRefreshedRuns = runs
     }
 
+    /// Another part of the app (for example a Search result) asked to
+    /// open a session: select it in the sidebar and show the Ask view.
+    @MainActor
+    func openRequestedSessionIfAny() {
+        guard let name = navigation.requestedSessionName else {
+            return
+        }
+
+        // If the session list has not loaded yet, keep the request;
+        // reloadMeetings() tries again once it has.
+        guard allSessions.contains(where: { $0.name == name }) else {
+            return
+        }
+
+        navigation.requestedSessionName = nil
+        selectLibrary(.session(name))
+        selectedWorkspaceTab = .context
+    }
+
     @MainActor
     func reloadMeetings() async {
         isLoading = true
@@ -772,6 +791,7 @@ extension MeetingsView {
                 for: loadedMeetings
             )
             await reloadSessionFilterChoices()
+            openRequestedSessionIfAny()
 
             if let requestedRun = navigation.requestedMeetingRun,
                let requestedMeeting = loadedMeetings.first(

@@ -45,6 +45,6 @@ final class AppNavigationController: ObservableObject {
 
     func openSession(name: String) {
         requestedSessionName = name
-        workspace = .sessions
+        workspace = .meetings
     }
 }

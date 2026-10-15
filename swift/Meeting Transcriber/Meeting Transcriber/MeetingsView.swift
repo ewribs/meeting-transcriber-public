@@ -516,6 +516,9 @@ struct MeetingsView: View {
         .task(id: selectedMeetingID) {
             await reloadSelectedMeetingDetail()
         }
+        .onChange(of: navigation.requestedSessionName) {
+            openRequestedSessionIfAny()
+        }
         .task(id: autoBuildKey) {
             await autoBuildContextIfNeeded()
         }
