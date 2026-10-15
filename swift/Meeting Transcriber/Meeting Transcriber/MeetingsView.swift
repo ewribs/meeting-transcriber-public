@@ -120,6 +120,7 @@ struct MeetingsView: View {
     @AppStorage("meetings.confirmFolderDelete") var confirmFolderDelete = true
     @AppStorage("ask.showFavorites") var showFavorites = true
     @State var dynamicEditorTarget: DynamicEditorTarget?
+    @State var sessionRefreshedRuns: Set<String> = []
     @State var pendingDeleteSession: String?
     @State var renameSessionTarget: String?
     @State var renameSessionText = ""

@@ -11,6 +11,9 @@ Runtime paths can be overridden in **Settings → Preferences**.
 - **Archive/NAS:** configured archive root, currently `/Volumes/Transcribe`
 - **Archived source recording:** `<archive>/<meeting>/source/<original>.m4a`
 - **Synology recycle bin:** `/Volumes/Transcribe/#recycle` when enabled on the NAS share
+- **In-progress recordings:** `~/Library/Application Support/Meeting Transcriber/PendingRecordings/` (raw capture plus a small sidecar file; see below)
+- **Folders, session order and saved sessions:** `meeting_folders.json`, `sidebar_order.json` and `query_sessions/` in the archive root
+- **Local backups of the above:** `local_backups/` in the project folder (Git-ignored)
 
 The output and archive locations are configurable. The `meetings/` source-recording folder remains the local intake/source location.
 
@@ -25,6 +28,12 @@ meetings/Jordan1v1091426.m4a
 ```
 
 The M4A is the original source recording. Selecting or queueing it in the GUI does not move or delete it.
+
+### Recordings made in the app
+
+While the native recorder is running, raw audio is written to disk continuously, with a small sidecar file describing the capture, in the `PendingRecordings` folder. When recording stops, the app finalizes it to a five-channel M4A in the Recordings folder and removes the pending files only after the M4A passes the same channel-contract check the transcription pipeline uses.
+
+If the app quits or crashes first, or finalization fails, the pending files are left in place. At the next launch the app finishes any unfinished capture automatically and queues the result. A capture that fails repeatedly (three attempts) is left alone rather than retried forever, and the app offers to reveal it in Finder. Pending files are removed only after a successful finalize, when you choose **Discard**, or when the capture is empty.
 
 ## 2. Transcription
 
@@ -211,6 +220,17 @@ Publish & Archive
            └── eligible after configured archive retention
                0 = Forever
 ```
+
+## Organization data and backups
+
+Folders, the manual sidebar order and saved sessions are small files that cannot be regenerated from meeting audio, so they are protected separately from audio:
+
+- At each app launch, a snapshot is copied to `local_backups/` on the local disk, away from the archive volume.
+- A snapshot is only written when something changed, and the newest 20 are kept.
+- Backing up never modifies or deletes the originals.
+- `tools/mt backup --list` shows snapshots; `tools/mt backup --restore NAME` previews a restore and `--apply` performs it.
+
+Deleting a meeting removes it from every saved session that references it, and drops that session's cached Changes comparison. Folder entries for a deleted meeting are not rewritten; a folder simply shows only the meetings that still exist.
 
 ## Operational ownership
 

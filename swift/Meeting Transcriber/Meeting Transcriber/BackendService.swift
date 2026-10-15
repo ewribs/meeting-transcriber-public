@@ -194,6 +194,16 @@ nonisolated struct BackendService: Sendable {
         )
     }
 
+    /// Re-evaluates the rules of every Dynamic session and saves the new
+    /// member lists. Best effort; callers ignore failures.
+    func refreshAllSessions() async throws {
+        _ = try await runBridge(
+            arguments: [
+                "refresh-all-sessions"
+            ]
+        )
+    }
+
     func performStartupRetention() async throws {
         _ = try await runBridge(
             arguments: [

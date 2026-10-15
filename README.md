@@ -19,9 +19,11 @@ The project combines **SwiftUI**, **Python**, **whisper.cpp**, **Ollama/MLX**, a
 - Transcribes locally with `whisper.cpp` in approximately five-minute chunks.
 - Cleans and summarizes transcripts with a local Ollama or MLX model.
 - Produces Markdown, HTML, metadata, and structured `meeting_memory.json` artifacts.
-- Browses unpublished and archived meetings in a native Meetings workspace.
-- Creates saved Sessions with persistent conversation history and local multi-meeting Q&A.
-- Supports global Search across meetings and sessions.
+- Browses unpublished and archived meetings in a native Meetings workspace, organized with folders and a drag-to-reorder sidebar.
+- Creates Fixed sessions (hand-picked meetings) and Dynamic sessions (rule-based, kept current automatically) with persistent conversation history and local multi-meeting Q&A.
+- Compares the latest meetings in a session with a "What changed since last time?" view.
+- Supports global Search across meetings and sessions, optionally scoped to a folder or session.
+- Recovers unfinished recordings after a crash and keeps local backups of your folders and sessions.
 - Publishes completed meetings to a configurable archive/NAS, including verified source-audio archival and retention controls.
 - Adapts local-AI execution through Auto / Conservative / Balanced / High Performance profiles.
 
@@ -104,11 +106,11 @@ Then:
 The app exposes four primary workspaces:
 
 - **Transcribe** — record a meeting or queue existing recordings for transcription and analysis.
-- **Meetings** — browse, review, publish, archive, delete, and query individual meetings.
-- **Sessions** — maintain saved multi-meeting contexts and persistent conversations.
+- **Meetings** — browse, organize into folders and sessions, review, publish, archive, delete, ask questions, and see what changed.
+- **Sessions** — the original saved-session browser (Meetings now covers most of this).
 - **Search** — search structured meeting/session content and jump directly to results.
 
-See the [User Guide](docs/USER_GUIDE.md).
+See the [Swift App Guide](docs/SWIFT_APP_GUIDE.md) for a tour of the app and the [User Guide](docs/USER_GUIDE.md) for behavior details.
 
 ## Repository layout
 
@@ -128,6 +130,7 @@ meeting-transcriber/
 ├── legacy/qt/                   # retired PySide/Qt front end
 └── docs/
     ├── INSTALL.md
+    ├── SWIFT_APP_GUIDE.md
     ├── USER_GUIDE.md
     ├── ARCHITECTURE.md
     ├── DEVELOPMENT.md
@@ -150,6 +153,7 @@ See [Development](docs/DEVELOPMENT.md) for test and contribution guidance.
 
 - [Installation Guide](docs/INSTALL.md)
 - [Setup & Security Transparency](docs/SETUP_AND_SECURITY.md)
+- [Swift App Guide](docs/SWIFT_APP_GUIDE.md)
 - [User Guide](docs/USER_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Development Guide](docs/DEVELOPMENT.md)

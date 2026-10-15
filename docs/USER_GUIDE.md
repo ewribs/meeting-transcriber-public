@@ -1,6 +1,6 @@
 # User Guide
 
-Meeting Transcriber is organized into four workspaces: **Transcribe**, **Meetings**, **Sessions**, and **Search**.
+Meeting Transcriber is organized into four workspaces: **Transcribe**, **Meetings**, **Sessions**, and **Search**. For a screen-by-screen tour and how-to recipes, see the [Swift App Guide](SWIFT_APP_GUIDE.md); this page describes behavior.
 
 ## Transcribe
 
@@ -13,7 +13,7 @@ Meeting Transcriber is organized into four workspaces: **Transcribe**, **Meeting
 5. Stop recording when finished.
 6. The app finalizes the raw capture to a compatible M4A and adds it to the transcription queue.
 
-If finalization fails, the app keeps the recoverable raw capture rather than silently discarding it.
+If finalization fails, the app keeps the recoverable raw capture rather than silently discarding it. If the app quits or crashes mid-recording, the unfinished capture is finalized and queued automatically the next time the app starts.
 
 ### Add an existing recording
 
@@ -29,7 +29,11 @@ The current Whisper strategy uses approximately five-minute chunks. Summary/quer
 
 ## Meetings
 
-The Meetings workspace includes both unpublished local runs and published/archived meetings.
+The Meetings workspace includes both unpublished local runs and published/archived meetings. A sidebar on the left filters the meeting list by **All Meetings**, **Recent**, **Unpublished**, **Not in a Folder**, your **Folders**, and your **Dynamic** and **Fixed** sessions. Folders and sessions can be sorted A–Z or dragged into a manual order. The list can be sorted, grouped by month or person, and shown at three densities.
+
+### Folders
+
+Folders are your own groupings; a meeting can be in several. A folder can be turned into a Fixed session with **Make Session from Folder…**.
 
 A meeting can expose:
 
@@ -49,36 +53,44 @@ Publishing copies the completed run to the configured archive, verifies the sour
 
 See [File Lifecycle & Retention](FILE_LIFECYCLE.md) for the complete safety model.
 
+### Ask and Changes
+
+With meetings or a session selected, the **Ask** view answers questions across that context using the local model. When a session is selected, a **Changes** view compares its latest meetings.
+
 ### Delete / Unpublish
 
 The app performs a plan/validation step before destructive meeting operations. Saved-session references and archive/local state are reconciled rather than blindly deleting files.
 
 ## Sessions
 
-Sessions let you work with a persistent set of meetings instead of asking one-off questions.
+Sessions let you work with a persistent set of meetings instead of asking one-off questions. They appear in the Meetings sidebar (and in the Sessions workspace).
 
-A saved session can include:
+- **Fixed** sessions hold meetings you choose. They are created from a folder or by adding meetings with **Add to**.
+- **Dynamic** sessions are defined by rules: person, any of several people, title contains / does not contain, topic contains / does not contain, and a date window. Choose **All rules** or **Any rule** to control how rules combine. The editor previews the matching meetings as you edit.
 
-- Fixed selected meetings, or dynamic selection criteria.
-- Person/title/topic/date criteria where supported.
-- Persistent conversation history.
-- Cached changes/delta analysis.
+Dynamic sessions keep themselves current: their rules are re-run when the app opens and whenever a meeting is added, published, or deleted. **Refresh** forces it. **Make 1v1 Session With** creates a Dynamic session for one person's meetings with "1v1" in the title.
 
-Opening a saved session reloads its persisted conversation history. New user/assistant turns are appended through the Python backend, so the same session can be resumed later.
+Opening a saved session reloads its persisted conversation history. New turns are appended through the Python backend, so the session can be resumed later.
 
 ### Asking questions
 
-Use the Conversation view to ask questions across the session's meeting context. The backend chooses direct or chunked execution according to the effective performance profile and available context.
+Use **Ask** to question the session's meeting context. The backend chooses direct or chunked execution according to the effective performance profile and available context.
 
 ### Changes
 
-For supported saved sessions, the Changes view compares recent meeting evidence and preserves grounded status/action/decision semantics rather than inferring changes from absence alone.
+**What changed since last time?** compares the two most recent meetings in a session and preserves grounded status/action/decision semantics rather than inferring changes from absence alone.
 
 ## Search
 
-Search performs a global search across indexed meeting and session content. Results can navigate directly to the relevant Meeting or Session workspace.
+Search performs a global search across indexed meeting and session content, optionally scoped to one folder or session. Results can navigate directly to the relevant Meeting or Session workspace.
 
 ## Preferences
+
+Preferences has three tabs. **Storage** and **Local AI** are saved with the **Save** button; **Meetings** settings apply immediately.
+
+- **Storage** — folders and recording retention.
+- **Local AI** — backend, model, performance profile and context override.
+- **Meetings** — "Recent" window, sort order, list density, sidebar rows and ordering, notices, confirmations, and prompt favorites.
 
 ### Storage
 
@@ -113,7 +125,7 @@ Preferences shows the detected hardware, effective profile, effective context, a
 
 Leave **Context override** at **Profile default** for normal use. An override changes the Ollama context window but does not change the selected performance tier. It is intended for deliberate testing/tuning rather than everyday operation.
 
-### Audio retention
+### Recording retention (Storage tab)
 
 Local source M4A and archived source M4A retention are configured independently. Retention is conservative: when archive verification is ambiguous, audio is kept rather than deleted.
 
@@ -123,7 +135,7 @@ An archived retention value of `0` means **Forever**.
 
 Meeting Transcriber intentionally separates transcription completion from publishing. If publishing fails after a meeting was processed successfully, the completed local run remains available and can be published again without retranscribing.
 
-The backend also supports recovery/resume paths for completed transcripts/summaries when downstream artifact creation failed.
+Folders and saved sessions are also copied to a local backup at app start; run `tools/mt backup --list` to see the copies and `tools/mt backup --restore NAME` to restore one. The backend also supports recovery/resume paths for completed transcripts/summaries when downstream artifact creation failed.
 
 ## Data and privacy
 

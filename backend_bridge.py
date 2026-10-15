@@ -382,6 +382,50 @@ def sessions_payload() -> dict[str, Any]:
 
 
 
+def refresh_all_sessions_payload() -> dict[str, Any]:
+    """Refresh the saved member list of every Dynamic session.
+
+    Sessions that are already current, have no matches, or fail are
+    skipped; one bad session never blocks the others.
+    """
+    from config import ARCHIVE_DIR
+    from session_browser import load_session_browser_entries
+
+    refreshed: list[dict[str, Any]] = []
+    failed = 0
+
+    entries = load_session_browser_entries(
+        ARCHIVE_DIR / "query_sessions"
+    )
+
+    for entry in entries:
+        if entry.session_type != "Dynamic":
+            continue
+
+        name = entry.name
+
+        try:
+            result = refresh_session_payload(name)
+        except Exception:
+            failed += 1
+            continue
+
+        if result.get("result") == "refreshed":
+            refreshed.append(
+                {
+                    "session_name": name,
+                    "added": int(result.get("added", 0)),
+                    "removed": int(result.get("removed", 0)),
+                }
+            )
+
+    return {
+        "schema_version": 1,
+        "refreshed": refreshed,
+        "failed": failed,
+    }
+
+
 def refresh_session_payload(
     session_name: str,
 ) -> dict[str, Any]:
@@ -2519,6 +2563,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return saved query sessions as JSON",
     )
 
+    subparsers.add_parser(
+        "refresh-all-sessions",
+        help="Refresh every saved dynamic session",
+    )
+
     refresh_parser = subparsers.add_parser(
         "refresh-session",
         help="Refresh one saved dynamic session",
@@ -2900,6 +2949,9 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "sessions":
             payload = sessions_payload()
+
+        elif args.command == "refresh-all-sessions":
+            payload = refresh_all_sessions_payload()
 
         elif args.command == "refresh-session":
             payload = refresh_session_payload(

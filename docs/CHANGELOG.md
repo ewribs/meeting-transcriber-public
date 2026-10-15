@@ -1,7 +1,4 @@
 # Changelog
-- Tightened explicit decision fallback recovery so recovered candidates must pass the same proposition-level evidence validation as model-extracted decisions, preventing descriptive or interrogative "is out" fragments from becoming authoritative decisions.
-
-- Tightened grounded precision validation for decisions, commitments, and open questions: rejects false `is out` decision fragments, clipped commitments, malformed question-like statements, duplicate commitments, and locally answered/rhetorical questions while preserving explicitly unresolved questions.
 
 This changelog tracks meaningful product, architecture, workflow, and reliability changes in Meeting Transcriber. It is intentionally curated rather than being a commit-by-commit diary.
 
@@ -9,6 +6,28 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+### Added (Meetings workspace)
+- Folders for organizing meetings, with a Meetings sidebar (All Meetings, Recent, Unpublished, Not in a Folder, Folders, Dynamic and Fixed sessions) and quick **Add to** menus.
+- Sort folders and sessions A–Z or drag them into a manual order; the order is saved.
+- **Make Session from Folder…** and one-step **Make 1v1 Session With** for a person's one-on-one meetings.
+- Dynamic session rules can match **All** or **Any** rule, and Dynamic sessions now refresh automatically when the app opens and when meetings are added, published or deleted.
+- **Changes** view ("What changed since last time?") for a selected session.
+- Meeting list grouping (by month or person) and a density setting.
+- Search can be scoped to a folder or a session.
+- Member list for a session in the Ask view.
+- Preferences reorganized into Storage, Local AI and Meetings tabs; Meetings settings apply instantly.
+
+### Added (safety)
+- Unfinished recordings are finalized and queued automatically at the next launch; unrecoverable captures are kept.
+- Automatic local backups of folders, session order and saved sessions, with `tools/mt backup` to list and restore.
+
+### Changed
+- Meetings sidebar toggles respond immediately; Meetings preferences no longer redraw the whole Preferences window.
+- Friendlier message when a session name is already in use.
+
+### Earlier unreleased changes
+- Tightened explicit decision fallback recovery so recovered candidates must pass the same proposition-level evidence validation as model-extracted decisions, preventing descriptive or interrogative "is out" fragments from becoming authoritative decisions.
+- Tightened grounded precision validation for decisions, commitments, and open questions: rejects false `is out` decision fragments, clipped commitments, malformed question-like statements, duplicate commitments, and locally answered/rhetorical questions while preserving explicitly unresolved questions.
 - Changed setup bootstrap to preserve existing setup paths/models by default, choose a hardware-aware model only for fresh installs, and avoid reinstalling functional local dependencies.
 
 ### Added

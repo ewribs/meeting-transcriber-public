@@ -737,6 +737,23 @@ extension MeetingsView {
         }
     }
 
+    /// Keeps Dynamic sessions current: whenever the set of meetings
+    /// changes (new, published or deleted), re-run every Dynamic
+    /// session's rules so its members stay up to date.
+    @MainActor
+    func refreshDynamicSessionsIfNeeded(
+        for loadedMeetings: [Meeting]
+    ) async {
+        let runs = Set(loadedMeetings.map { $0.run + "|" + $0.status })
+
+        guard runs != sessionRefreshedRuns else {
+            return
+        }
+
+        try? await backend.refreshAllSessions()
+        sessionRefreshedRuns = runs
+    }
+
     @MainActor
     func reloadMeetings() async {
         isLoading = true
@@ -751,6 +768,9 @@ extension MeetingsView {
                 try await backend.loadMeetings()
 
             meetings = loadedMeetings
+            await refreshDynamicSessionsIfNeeded(
+                for: loadedMeetings
+            )
             await reloadSessionFilterChoices()
 
             if let requestedRun = navigation.requestedMeetingRun,
