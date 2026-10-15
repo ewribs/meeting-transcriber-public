@@ -78,6 +78,10 @@ final class TranscriptionController:
     @Published var elapsedSeconds = 0
     @Published var recordingsDirectory =
         ""
+    /// Goes up by one each time a recording finishes processing (and
+    /// publishing, when automatic). The Meetings workspace watches this
+    /// so a finished meeting appears without visiting Transcribe.
+    @Published var finishedMeetingCount = 0
     @Published var queueResultMessage:
         String?
     @Published var queueErrorMessage:
@@ -453,17 +457,20 @@ final class TranscriptionController:
                         .published
                     succeeded += 1
                     published += 1
+                    finishedMeetingCount += 1
 
                 case "Ready to Publish":
                     queue[currentIndex].status =
                         .readyToPublish
                     succeeded += 1
+                    finishedMeetingCount += 1
 
                 case "Publish Failed":
                     queue[currentIndex].status =
                         .publishFailed
                     succeeded += 1
                     publishFailures += 1
+                    finishedMeetingCount += 1
 
                 default:
                     queue[currentIndex].status =

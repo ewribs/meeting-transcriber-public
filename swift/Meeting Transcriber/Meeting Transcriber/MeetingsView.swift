@@ -509,6 +509,14 @@ struct MeetingsView: View {
             )
             .frame(width: 0, height: 0)
         }
+        .background {
+            MeetingFinishedBridge {
+                Task {
+                    await reloadMeetings()
+                }
+            }
+            .frame(width: 0, height: 0)
+        }
         .navigationTitle("Meetings")
         .task {
             await reloadMeetings()
@@ -1312,6 +1320,23 @@ struct MeetingTranscriptionQueueCleanupBridge: View {
                     run: request.run,
                     sourcePath: request.sourcePath
                 )
+            }
+    }
+}
+
+/// Reloads the meeting list when a recording finishes processing, even if
+/// the Transcribe workspace is not showing. Kept as its own tiny view so
+/// the Meetings list does not redraw on every progress tick.
+struct MeetingFinishedBridge: View {
+    @EnvironmentObject
+    private var transcriptionController: TranscriptionController
+
+    let onFinished: () -> Void
+
+    var body: some View {
+        Color.clear
+            .onChange(of: transcriptionController.finishedMeetingCount) {
+                onFinished()
             }
     }
 }
