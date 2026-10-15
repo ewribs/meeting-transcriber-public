@@ -34,6 +34,20 @@ extension MeetingsView {
         return nil
     }
 
+    /// Folders in the order the sidebar shows them, for menus.
+    var sortedFolders: [MeetingFolder] {
+        railSort.sorted(folders, name: { $0.name })
+    }
+
+    /// Fixed sessions in the order the sidebar shows them, for menus.
+    var sortedFixedSessions: [SavedSession] {
+        railSort.sorted(
+            sessionsOfKind("fixed"),
+            name: { $0.name },
+            manualOrder: sessionOrder.fixed
+        )
+    }
+
     func orderedFolderNames() -> [String] {
         railSort
             .sorted(folders, name: { $0.name })

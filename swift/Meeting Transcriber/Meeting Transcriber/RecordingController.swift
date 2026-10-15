@@ -442,6 +442,9 @@ final class RecordingController: ObservableObject {
     @Published var errorMessage: String?
     @Published var recordingPath: String?
     @Published var rawCapturePath: String?
+    /// Raw captures belonging to this launch, so recovery never touches
+    /// a recording that is still in progress or being finalized.
+    private var activeCapturePaths = Set<String>()
     @Published var elapsedSeconds = 0
 
     private var halCapture: AudioHALCapture?
@@ -594,10 +597,24 @@ final class RecordingController: ObservableObject {
                 stem: stem,
                 extension: "m4a"
             )
-            let captureURL = FileManager.default.temporaryDirectory
+            try PendingRecordingStore.prepareDirectory()
+            let captureURL = PendingRecordingStore.directory
                 .appendingPathComponent("MeetingTranscriber_Recording_\(UUID().uuidString).f32le")
 
             try recordingSink.begin(url: captureURL)
+
+            // Everything needed to finish this recording if the app is
+            // closed or crashes before the m4a exists.
+            try? PendingRecordingStore.write(
+                PendingRecording(
+                    capturePath: captureURL.path,
+                    outputPath: outputURL.path,
+                    sampleRate: Int(sampleRate),
+                    channels: inputChannels,
+                    startedAt: Date().timeIntervalSince1970
+                )
+            )
+            activeCapturePaths.insert(captureURL.path)
             pendingOutputURL = outputURL
             rawCapturePath = captureURL.path
             elapsedSeconds = 0
@@ -629,6 +646,10 @@ final class RecordingController: ObservableObject {
         pendingOutputURL = nil
 
         if let writeError {
+            if let path = rawCapturePath {
+                activeCapturePaths.remove(path)
+            }
+
             errorMessage = writeError
             statusText = "Recording stopped, but the raw audio could not be completed."
             return
@@ -696,9 +717,8 @@ final class RecordingController: ObservableObject {
                 return
             }
 
-            try? FileManager.default.removeItem(
-                at: URL(fileURLWithPath: capturePath)
-            )
+            PendingRecordingStore.remove(capturePath: capturePath)
+            activeCapturePaths.remove(capturePath)
             recordingPath = outputURL.path
             onFinalized(outputURL.path)
         } catch {
@@ -716,6 +736,10 @@ final class RecordingController: ObservableObject {
         status: String,
         capturePath: String
     ) {
+        // The raw capture and its sidecar stay on disk, so the next
+        // launch will try again.
+        activeCapturePaths.remove(capturePath)
+
         // Keep the capture reachable for "Reveal Recovery Capture",
         // unless a newer recording is using that slot.
         if rawCapturePath == nil {
@@ -726,6 +750,94 @@ final class RecordingController: ObservableObject {
 
         if !isRecording {
             statusText = status
+        }
+    }
+
+    /// Finishes recordings left behind when the app was closed or crashed
+    /// during a recording or while it was being encoded. Runs one at a time
+    /// in the background; each finished m4a goes to `onFinalized`.
+    func recoverPendingRecordings(
+        onFinalized: @escaping (String) -> Void
+    ) async {
+        let pending: [PendingRecording] = PendingRecordingStore.all()
+            .filter { !activeCapturePaths.contains($0.capturePath) }
+
+        var queue: [PendingRecording] = []
+
+        for item in pending {
+            // Nothing to recover from an empty or missing capture.
+            if PendingRecordingStore.fileSize(atPath: item.capturePath) == 0 {
+                PendingRecordingStore.remove(capturePath: item.capturePath)
+                continue
+            }
+
+            // A capture that keeps failing is left alone, not retried forever.
+            if item.attempts >= PendingRecordingStore.maxAttempts {
+                continue
+            }
+
+            queue.append(item)
+        }
+
+        if queue.isEmpty {
+            return
+        }
+
+        finalizingCount += queue.count
+        var recovered = 0
+
+        statusText = queue.count == 1
+            ? "Finishing an unfinished recording from last time…"
+            : "Finishing " + String(queue.count)
+                + " unfinished recordings from last time…"
+
+        for item in queue {
+            activeCapturePaths.insert(item.capturePath)
+
+            var attempt: PendingRecording = item
+            attempt.attempts += 1
+            try? PendingRecordingStore.write(attempt)
+
+            let outputURL = URL(fileURLWithPath: item.outputPath)
+
+            // Any file at the destination is a partial from the
+            // interrupted run; the raw capture is the real source.
+            try? FileManager.default.removeItem(at: outputURL)
+
+            do {
+                let result = try await BackendService()
+                    .finalizeAudioRecording(
+                        sourcePath: item.capturePath,
+                        outputPath: item.outputPath,
+                        sampleRate: item.sampleRate,
+                        channels: item.channels
+                    )
+
+                if result.compatible {
+                    PendingRecordingStore.remove(
+                        capturePath: item.capturePath
+                    )
+                    recovered += 1
+                    onFinalized(item.outputPath)
+                } else {
+                    try? FileManager.default.removeItem(at: outputURL)
+                    errorMessage = result.message
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: outputURL)
+                errorMessage = error.localizedDescription
+            }
+
+            activeCapturePaths.remove(item.capturePath)
+            finalizingCount -= 1
+        }
+
+        if recovered > 0, !isRecording, finalizingCount == 0 {
+            statusText = "Recovered " + String(recovered)
+                + (recovered == 1 ? " recording" : " recordings")
+                + " from last time and added "
+                + (recovered == 1 ? "it" : "them")
+                + " to the transcription queue."
         }
     }
 
@@ -740,9 +852,8 @@ final class RecordingController: ObservableObject {
         pendingOutputURL = nil
 
         if let rawCapturePath = usableFilesystemPath(rawCapturePath) {
-            try? FileManager.default.removeItem(
-                at: URL(fileURLWithPath: rawCapturePath)
-            )
+            PendingRecordingStore.remove(capturePath: rawCapturePath)
+            activeCapturePaths.remove(rawCapturePath)
         }
         rawCapturePath = nil
         elapsedSeconds = 0

@@ -8,16 +8,15 @@ extension MeetingsView {
                 selection:
                     $selectedWorkspaceTab
             ) {
-                ForEach(
-                    MeetingWorkspaceTab.allCases
-                ) { tab in
+                ForEach(visibleWorkspaceTabs) { tab in
                     Text(tab.rawValue)
                         .tag(tab)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 300)
+            .id(visibleWorkspaceTabs.count)
+            .frame(maxWidth: 380)
             .padding(.horizontal, 24)
             .padding(.vertical, 10)
 
@@ -30,12 +29,38 @@ extension MeetingsView {
 
                 case .context:
                     contextWorkspace
+
+                case .changes:
+                    changesWorkspace
                 }
             }
             .frame(
                 maxWidth: .infinity,
                 maxHeight: .infinity
             )
+        }
+        .onChange(of: sessionFilterName) {
+            if selectedWorkspaceTab == .changes,
+               sessionFilterSession == nil {
+                selectedWorkspaceTab = .meeting
+            }
+        }
+    }
+
+    /// Changes compares a session's recent meetings, so that tab only
+    /// exists while a session is open.
+    var visibleWorkspaceTabs: [MeetingWorkspaceTab] {
+        MeetingWorkspaceTab.allCases.filter { tab in
+            tab != .changes || sessionFilterSession != nil
+        }
+    }
+
+    @ViewBuilder
+    var changesWorkspace: some View {
+        if let session = sessionFilterSession {
+            SessionChangesPanel(session: session)
+        } else {
+            meetingWorkspace
         }
     }
 

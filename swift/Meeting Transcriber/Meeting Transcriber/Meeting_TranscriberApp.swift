@@ -119,6 +119,12 @@ struct Meeting_TranscriberApp: App {
 
                     // Best-effort local copy of folders and saved sessions.
                     try? await BackendService().backupState()
+
+                    // Finish any recording left unfinished by a crash or
+                    // by quitting while it was still being encoded.
+                    await recordingController.recoverPendingRecordings { path in
+                        transcriptionController.addRecordingPaths([path])
+                    }
                 }
         }
 

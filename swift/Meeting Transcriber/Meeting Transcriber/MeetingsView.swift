@@ -15,6 +15,7 @@ struct MeetingsView: View {
     {
         case meeting = "Meeting"
         case context = "Ask"
+        case changes = "Changes"
 
         var id: String {
             rawValue
@@ -1017,7 +1018,7 @@ struct MeetingsView: View {
     var addToMenu: some View {
         Menu("Add to") {
             Section("Folder") {
-                ForEach(folders) { folder in
+                ForEach(sortedFolders) { folder in
                     Button(folder.name) {
                         Task {
                             await addRunsToFolder(
@@ -1036,9 +1037,7 @@ struct MeetingsView: View {
             }
 
             Section("Session") {
-                ForEach(
-                    allSessions.filter { !$0.isDynamic }
-                ) { session in
+                ForEach(sortedFixedSessions) { session in
                     Button(session.name) {
                         Task {
                             await addDroppedRuns(

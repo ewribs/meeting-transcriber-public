@@ -10,7 +10,7 @@ extension MeetingsView {
             : [meeting.run]
 
         Menu("Add to Folder") {
-            ForEach(folders) { folder in
+            ForEach(sortedFolders) { folder in
                 Button(folder.name) {
                     Task {
                         await addRunsToFolder(
@@ -29,6 +29,8 @@ extension MeetingsView {
                 openCreateFolder(with: runs)
             }
         }
+
+        oneOnOneMenu(for: meeting)
 
         if let session = sessionFilterSession,
            !session.isDynamic {
