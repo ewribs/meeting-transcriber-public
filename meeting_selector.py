@@ -254,12 +254,16 @@ def select_meetings(
     status: str | None = None,
     exclude_title: str | None = None,
     exclude_topic: str | None = None,
+    match: str | None = None,
 ) -> list[dict]:
-    """Select meetings. Every supplied rule must hold (AND).
+    """Select meetings. By default every supplied rule must hold (AND).
 
     people: match when ANY of these names is a participant.
     status: "Published" or "Unpublished".
     exclude_title / exclude_topic: skip meetings that contain the text.
+    match: "any" lets a meeting qualify when it satisfies at least ONE of
+        the content rules (person, people, title, topic). The date window,
+        status and the exclude rules always apply on top of that.
     """
     meetings = load_meeting_index(
         archive_dir,
@@ -290,6 +294,8 @@ def select_meetings(
     wanted_status = (
         status.strip().casefold() if status else None
     )
+
+    any_mode = str(match or "").strip().casefold() == "any"
 
     for meeting in meetings:
         if meeting.get("superseded_by"):
@@ -325,13 +331,7 @@ def select_meetings(
             for name in meeting.get("participants", [])
         ]
 
-        if person and person.lower() not in participants_lower:
-            continue
-
-        if wanted_people and not (
-            wanted_people & set(participants_lower)
-        ):
-            continue
+        title_search_text = ""
 
         if title or exclude_title:
             title_search_text = " ".join(
@@ -341,32 +341,56 @@ def select_meetings(
                 ]
             ).lower()
 
-            if title and title.lower() not in title_search_text:
-                continue
-
-            if (
-                exclude_title
-                and exclude_title.lower() in title_search_text
-            ):
-                continue
-
         meeting_dir = Path(meeting["location"])
+
+        topic_text = None
 
         if topic or exclude_topic:
             topic_text = _topic_text(meeting_dir)
 
-            if topic and (
-                topic_text is None
-                or topic.lower() not in topic_text
-            ):
+        # Content rules: all must hold, or (match="any") at least one.
+        content_hits = []
+
+        if person:
+            content_hits.append(
+                person.lower() in participants_lower
+            )
+
+        if wanted_people:
+            content_hits.append(
+                bool(wanted_people & set(participants_lower))
+            )
+
+        if title:
+            content_hits.append(
+                title.lower() in title_search_text
+            )
+
+        if topic:
+            content_hits.append(
+                topic_text is not None
+                and topic.lower() in topic_text
+            )
+
+        if content_hits:
+            if any_mode:
+                if not any(content_hits):
+                    continue
+            elif not all(content_hits):
                 continue
 
-            if (
-                exclude_topic
-                and topic_text is not None
-                and exclude_topic.lower() in topic_text
-            ):
-                continue
+        if (
+            exclude_title
+            and exclude_title.lower() in title_search_text
+        ):
+            continue
+
+        if (
+            exclude_topic
+            and topic_text is not None
+            and exclude_topic.lower() in topic_text
+        ):
+            continue
 
         participants = meeting.get(
             "participants",

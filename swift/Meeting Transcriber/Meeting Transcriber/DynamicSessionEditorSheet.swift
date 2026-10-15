@@ -21,6 +21,7 @@ struct DynamicSessionEditorSheet: View {
     @State private var mode = "create"
     @State private var name = ""
     @State private var rules: [SessionRuleRow] = []
+    @State private var matchAny = false
     @State private var historyOptions: [String] = []
     @State private var historyLabel = ""
     @State private var customRangeLabel: String?
@@ -66,6 +67,7 @@ struct DynamicSessionEditorSheet: View {
                     name: $name,
                     isNameEditable: isCreating,
                     rows: $rules,
+                    matchAny: $matchAny,
                     historyOptions: historyOptions,
                     historyLabel: $historyLabel,
                     customRangeLabel: customRangeLabel
@@ -135,6 +137,7 @@ struct DynamicSessionEditorSheet: View {
             mode = editor.mode
             name = target.name == nil ? "" : editor.sessionName
             rules = [SessionRuleRow].rows(from: editor)
+            matchAny = editor.match == "any"
             historyOptions = editor.historyOptions
             historyLabel = editor.selectedHistoryLabel
             customRangeLabel = editor.customRangeLabel
@@ -167,7 +170,7 @@ struct DynamicSessionEditorSheet: View {
             isSaving = false
         }
 
-        let arguments = rules.bridgeArguments
+        let arguments = rules.bridgeArguments(matchAny: matchAny)
 
         do {
             let result: DynamicSessionChangeResponse

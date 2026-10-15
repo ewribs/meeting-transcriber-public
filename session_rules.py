@@ -1,4 +1,5 @@
-"""Extra rule kinds for dynamic sessions (any-of people, status, excludes)."""
+"""Extra rule kinds for dynamic sessions (any-of people, status, excludes,
+and the any/all match mode)."""
 
 from __future__ import annotations
 
@@ -6,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 
-RULE_KEYS = ("people", "status", "exclude_title", "exclude_topic")
+RULE_KEYS = ("people", "status", "exclude_title", "exclude_topic", "match")
 _STATUS_BY_FOLD = {"published": "Published", "unpublished": "Unpublished"}
 
 
@@ -30,6 +31,10 @@ def normalize_rules(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     status = _STATUS_BY_FOLD.get(str(raw.get("status") or "").strip().casefold())
     if status:
         rules["status"] = status
+
+    # "all" is the default and is not stored; only "any" is kept.
+    if str(raw.get("match") or "").strip().casefold() == "any":
+        rules["match"] = "any"
 
     for key in ("exclude_title", "exclude_topic"):
         text = str(raw.get(key) or "").strip()

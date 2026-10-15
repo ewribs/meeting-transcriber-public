@@ -35,6 +35,7 @@ struct SessionsView: View {
     @State private var dynamicEditorMode = "create"
     @State private var dynamicSessionName = ""
     @State private var dynamicRules: [SessionRuleRow] = []
+    @State private var dynamicMatchAny = false
     @State private var dynamicHistoryOptions: [String] = []
     @State private var dynamicHistoryLabel = ""
     @State private var dynamicCustomRangeLabel: String?
@@ -228,6 +229,7 @@ struct SessionsView: View {
                     name: $dynamicSessionName,
                     isNameEditable: dynamicEditorMode == "create",
                     rows: $dynamicRules,
+                    matchAny: $dynamicMatchAny,
                     historyOptions: dynamicHistoryOptions,
                     historyLabel: $dynamicHistoryLabel,
                     customRangeLabel: dynamicCustomRangeLabel
@@ -1698,6 +1700,7 @@ struct SessionsView: View {
         dynamicEditorMode = editor.mode
         dynamicSessionName = editor.sessionName
         dynamicRules = [SessionRuleRow].rows(from: editor)
+        dynamicMatchAny = editor.match == "any"
         dynamicHistoryOptions =
             editor.historyOptions
         dynamicHistoryLabel =
@@ -1727,7 +1730,9 @@ struct SessionsView: View {
         isSavingDynamicSession = true
         dynamicEditorErrorMessage = nil
 
-        let ruleArguments = dynamicRules.bridgeArguments
+        let ruleArguments = dynamicRules.bridgeArguments(
+            matchAny: dynamicMatchAny
+        )
 
         defer {
             isSavingDynamicSession = false

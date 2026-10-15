@@ -109,6 +109,7 @@ struct MeetingsView: View {
     @State var dropTargetKey: String?
     @AppStorage("meetings.recentDays") var recentDays = 14
     @AppStorage("meetings.sortOrder") var sortOrderRaw = "newest"
+    @AppStorage("meetings.groupBy") var groupByRaw = "none"
     @AppStorage("meetings.showRecentRow") var showRecentRow = true
     @AppStorage("meetings.showUnpublishedRow") var showUnpublishedRow = true
     @AppStorage("meetings.showUnfiledRow") var showUnfiledRow = true
@@ -121,6 +122,10 @@ struct MeetingsView: View {
     @State var renameSessionText = ""
     @State var renameSessionError: String?
     @State var isRenamingSession = false
+    @State var folderSessionSource: String?
+    @State var folderSessionName = ""
+    @State var folderSessionError: String?
+    @State var isMakingFolderSession = false
     @State var folderNameText = ""
     @State var folderErrorMessage: String?
     @State var isSavingFolder = false
@@ -929,35 +934,7 @@ struct MeetingsView: View {
                     )
 
                 } else {
-                    List(
-                        filteredMeetings,
-                        selection: $selectedMeetingID
-                    ) { meeting in
-                        MeetingRow(
-                            meeting: meeting,
-                            isInContext:
-                                contextMeetingIDs
-                                    .contains(
-                                        meeting.id
-                                    ),
-                            toggleContext: {
-                                // Ticking a row also selects it so the
-                                // detail pane follows the click.
-                                selectedMeetingID = meeting.id
-                                toggleMeetingContext(
-                                    meeting
-                                )
-                            }
-                        )
-                        .tag(meeting.id)
-                        .draggable(dragPayload(for: meeting)) {
-                            dragPreview(for: meeting)
-                        }
-                        .contextMenu {
-                            meetingFolderMenu(for: meeting)
-                        }
-                    }
-                    .listStyle(.inset)
+                    meetingListView
                     .frame(
                         maxWidth: .infinity,
                         maxHeight: .infinity,
@@ -1100,13 +1077,20 @@ struct MeetingsView: View {
                         }
                     }
                     .pickerStyle(.inline)
+
+                    Picker("Group by", selection: $groupByRaw) {
+                        ForEach(MeetingGrouping.allCases) { option in
+                            Text(option.label).tag(option.rawValue)
+                        }
+                    }
+                    .pickerStyle(.inline)
                 } label: {
                     Image(systemName: "arrow.up.arrow.down")
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Sort meetings")
+                .help("Sort and group meetings")
 
                 Button {
                     Task {
@@ -1187,6 +1171,12 @@ struct MeetingRow: View {
     let isInContext: Bool
     let toggleContext: () -> Void
 
+    @AppStorage("meetings.density") private var densityRaw = "normal"
+
+    private var density: MeetingDensity {
+        MeetingDensity(rawValue: densityRaw) ?? .normal
+    }
+
     var body: some View {
         HStack(
             alignment: .center,
@@ -1212,7 +1202,7 @@ struct MeetingRow: View {
 
             VStack(
                 alignment: .leading,
-                spacing: 4
+                spacing: density.lineSpacing
             ) {
                 Text(meeting.title)
                     .fontWeight(.medium)
@@ -1234,7 +1224,7 @@ struct MeetingRow: View {
                         .lineLimit(1)
                     }
                 }
-                .font(.caption)
+                .font(density.detailFont)
                 .foregroundStyle(.secondary)
             }
 
@@ -1245,7 +1235,7 @@ struct MeetingRow: View {
                 isPublished: meeting.isPublished
             )
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, density.rowPadding)
     }
 
     private func formattedDate(_ rawDate: String) -> String {

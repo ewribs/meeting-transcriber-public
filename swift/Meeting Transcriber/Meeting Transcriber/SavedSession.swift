@@ -114,10 +114,12 @@ nonisolated struct DynamicSessionEditorResponse: Decodable, Sendable {
     let status: String?
     let excludeTitle: String?
     let excludeTopic: String?
+    let match: String?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case mode
+        case match
         case sessionName = "session_name"
         case person
         case title

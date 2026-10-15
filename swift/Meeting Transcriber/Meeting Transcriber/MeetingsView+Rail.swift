@@ -120,6 +120,9 @@ extension MeetingsView {
         .background(
             Color(nsColor: .windowBackgroundColor)
         )
+        .sheet(isPresented: folderSessionSheetBinding) {
+            folderSessionSheet
+        }
     }
 
     var libraryRows: some View {
@@ -268,6 +271,12 @@ extension MeetingsView {
             selectLibrary(.folder(folder.name))
         }
         .contextMenu {
+            Button("Make Session from Folder…") {
+                beginFolderSession(folder)
+            }
+
+            Divider()
+
             Button("Rename…") {
                 openRenameFolder(folder.name)
             }

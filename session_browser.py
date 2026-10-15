@@ -118,6 +118,9 @@ def format_session_criteria(
     if status:
         lines.append(f"Status: {status}")
 
+    if selection_criteria.get("match") == "any":
+        lines.append("Match: any of the Person, Title and Topic rules")
+
     exclude_title = selection_criteria.get("exclude_title")
     if exclude_title:
         lines.append(f"Title does not contain: {exclude_title}")

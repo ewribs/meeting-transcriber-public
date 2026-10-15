@@ -499,6 +499,7 @@ def session_editor_payload(
             "status": "",
             "exclude_title": "",
             "exclude_topic": "",
+            "match": "all",
         }
 
     from query.sessions import load_chat_session
@@ -538,6 +539,7 @@ def session_editor_payload(
             criteria.get("exclude_title") or "",
         "exclude_topic":
             criteria.get("exclude_topic") or "",
+        "match": criteria.get("match") or "all",
     }
 
 

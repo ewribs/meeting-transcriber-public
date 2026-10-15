@@ -45,8 +45,14 @@ extension Array where Element == SessionRuleRow {
             )
     }
 
-    var bridgeArguments: SessionRuleArguments {
+    func bridgeArguments(
+        matchAny: Bool
+    ) -> SessionRuleArguments {
         var rules: [String: String] = [:]
+
+        if matchAny {
+            rules["match"] = "any"
+        }
 
         let pairs: [(String, SessionRuleKind)] = [
             ("people", .people),
@@ -117,6 +123,7 @@ struct SessionRuleEditorView: View {
     @Binding var name: String
     let isNameEditable: Bool
     @Binding var rows: [SessionRuleRow]
+    @Binding var matchAny: Bool
     let historyOptions: [String]
     @Binding var historyLabel: String
     let customRangeLabel: String?
@@ -139,7 +146,7 @@ struct SessionRuleEditorView: View {
     }
 
     private var previewKey: String {
-        historyLabel + "|" + rows
+        (matchAny ? "any|" : "all|") + historyLabel + "|" + rows
             .map { "\($0.kind.rawValue)=\($0.value)" }
             .joined(separator: "|")
     }
@@ -203,10 +210,7 @@ struct SessionRuleEditorView: View {
                 alignment: .leading,
                 spacing: 6
             ) {
-                Text("RULES — a meeting must match all of them")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                rulesHeader
 
                 VStack(spacing: 0) {
                     if rows.isEmpty {
@@ -291,6 +295,36 @@ struct SessionRuleEditorView: View {
         }
     }
 
+    private var rulesHeader: some View {
+        let note: String = matchAny
+            ? "A meeting needs to match at least one of the Person, Title and Topic rules. The “does not contain” rules and the dates still apply to every meeting."
+            : "A meeting must match every rule."
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text("RULES")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+
+                Picker("Match", selection: $matchAny) {
+                    Text("All rules").tag(false)
+                    Text("Any rule").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 190)
+
+                Spacer()
+            }
+
+            Text(note)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var previewBox: some View {
         VStack(
             alignment: .leading,
@@ -365,7 +399,7 @@ struct SessionRuleEditorView: View {
 
     @MainActor
     private func refreshPreview() async {
-        let arguments = rows.bridgeArguments
+        let arguments = rows.bridgeArguments(matchAny: matchAny)
         let label = usesSavedRange
             ? "All history"
             : historyLabel

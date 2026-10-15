@@ -8,6 +8,9 @@ struct PreferencesView: View {
     @AppStorage("meetings.sortOrder")
     private var sortOrderRaw = "newest"
 
+    @AppStorage("meetings.density")
+    private var densityRaw = "normal"
+
     @AppStorage("meetings.showRecentRow")
     private var showRecentRow = true
 
@@ -408,6 +411,15 @@ struct PreferencesView: View {
                                 ? "1 day"
                                 : String(recentDays) + " days"
                         )
+                    }
+                }
+
+                Picker(
+                    "List density",
+                    selection: $densityRaw
+                ) {
+                    ForEach(MeetingDensity.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
                     }
                 }
 

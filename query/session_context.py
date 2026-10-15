@@ -50,6 +50,7 @@ def select_session_meetings(
         exclude_topic=selection_criteria.get(
             "exclude_topic"
         ),
+        match=selection_criteria.get("match"),
     )
 
 
