@@ -18,10 +18,9 @@ The main workspaces are:
 
 - Transcribe
 - Meetings
-- Sessions
 - Search
 
-The **Meetings** workspace is the main working area. It has a sidebar (All Meetings, Recent, Unpublished, Not in a Folder, Folders, Dynamic and Fixed sessions), a meeting list, and a detail area with **Meeting**, **Ask** and (for a selected session) **Changes** views. It is split across several `MeetingsView+*.swift` files by concern: rail/sidebar, ordering, organizing (folders and Add-to menus), folder-to-session, 1v1 sessions, list/grouping, and context/Ask. The standalone **Sessions** workspace is the older session browser and is expected to be retired once the Meetings workspace fully replaces it.
+The **Meetings** workspace is the main working area. It has a sidebar (All Meetings, Recent, Unpublished, Not in a Folder, Folders, Dynamic and Fixed sessions), a meeting list, and a detail area with **Meeting**, **Ask** and (for a selected session) **Changes** views. It is split across several `MeetingsView+*.swift` files by concern: rail/sidebar, ordering, organizing (folders and Add-to menus), folder-to-session, 1v1 sessions, list/grouping, and context/Ask. Sessions are managed entirely inside Meetings; the old standalone Sessions workspace has been removed.
 
 Small view preferences (Recent window, sort, density, grouping, sidebar rows) are stored with `@AppStorage`, not in the Python settings, because they only affect presentation. Storage, local-AI and retention settings go through the backend (`preferences` / `save-preferences`).
 

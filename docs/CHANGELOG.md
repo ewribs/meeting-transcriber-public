@@ -22,6 +22,7 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 - Automatic local backups of folders, session order and saved sessions, with `tools/mt backup` to list and restore.
 
 ### Changed
+- Removed the standalone Sessions tab; sessions are managed in the Meetings sidebar, and Search results for sessions open there.
 - Meetings sidebar toggles respond immediately; Meetings preferences no longer redraw the whole Preferences window.
 - Friendlier message when a session name is already in use.
 

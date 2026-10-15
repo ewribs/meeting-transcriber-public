@@ -103,11 +103,10 @@ Then:
 
 ## Workspaces
 
-The app exposes four primary workspaces:
+The app exposes three primary workspaces:
 
 - **Transcribe** — record a meeting or queue existing recordings for transcription and analysis.
 - **Meetings** — browse, organize into folders and sessions, review, publish, archive, delete, ask questions, and see what changed.
-- **Sessions** — the original saved-session browser (Meetings now covers most of this).
 - **Search** — search structured meeting/session content and jump directly to results.
 
 See the [Swift App Guide](docs/SWIFT_APP_GUIDE.md) for a tour of the app and the [User Guide](docs/USER_GUIDE.md) for behavior details.

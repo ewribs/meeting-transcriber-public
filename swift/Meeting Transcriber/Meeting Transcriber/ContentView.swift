@@ -38,9 +38,6 @@ struct ContentView: View {
                 case .meetings:
                     MeetingsView()
 
-                case .sessions:
-                    SessionsView()
-
                 case .search:
                     SearchView()
 

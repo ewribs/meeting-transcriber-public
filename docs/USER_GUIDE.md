@@ -1,6 +1,6 @@
 # User Guide
 
-Meeting Transcriber is organized into four workspaces: **Transcribe**, **Meetings**, **Sessions**, and **Search**. For a screen-by-screen tour and how-to recipes, see the [Swift App Guide](SWIFT_APP_GUIDE.md); this page describes behavior.
+Meeting Transcriber is organized into three workspaces: **Transcribe**, **Meetings**, and **Search**. For a screen-by-screen tour and how-to recipes, see the [Swift App Guide](SWIFT_APP_GUIDE.md); this page describes behavior.
 
 ## Transcribe
 
@@ -63,7 +63,7 @@ The app performs a plan/validation step before destructive meeting operations. S
 
 ## Sessions
 
-Sessions let you work with a persistent set of meetings instead of asking one-off questions. They appear in the Meetings sidebar (and in the Sessions workspace).
+Sessions let you work with a persistent set of meetings instead of asking one-off questions. They live in the Meetings sidebar.
 
 - **Fixed** sessions hold meetings you choose. They are created from a folder or by adding meetings with **Add to**.
 - **Dynamic** sessions are defined by rules: person, any of several people, title contains / does not contain, topic contains / does not contain, and a date window. Choose **All rules** or **Any rule** to control how rules combine. The editor previews the matching meetings as you edit.
