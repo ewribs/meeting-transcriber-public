@@ -20,7 +20,7 @@ from performance_profile import resolve_performance_profile
 # ---------------------------------------------------------
 
 APP_NAME = "Meeting Transcriber"
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.3.0"
 
 
 # ---------------------------------------------------------

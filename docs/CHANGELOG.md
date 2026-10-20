@@ -6,6 +6,10 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+- Nothing yet.
+
+## v1.3 — 2026-10-20
+
 - Preferences → Storage has a new Backups section: second backup folder, keep counts for each location, last-backup status and Back Up Now.
 
 ### Added (Meetings workspace)
