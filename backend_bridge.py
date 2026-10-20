@@ -382,6 +382,18 @@ def sessions_payload() -> dict[str, Any]:
 
 
 
+def rename_meeting_payload(run: str, title: str) -> dict[str, Any]:
+    from config import ARCHIVE_DIR, OUTPUT_DIR
+    from meeting_rename import rename_meeting
+
+    return rename_meeting(
+        run,
+        title,
+        archive_dir=ARCHIVE_DIR,
+        output_dir=OUTPUT_DIR,
+    )
+
+
 def refresh_all_sessions_payload() -> dict[str, Any]:
     """Refresh the saved member list of every Dynamic session.
 
@@ -2563,6 +2575,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return saved query sessions as JSON",
     )
 
+    rename_meeting_parser = subparsers.add_parser(
+        "rename-meeting",
+        help="Change how a meeting's title is displayed",
+    )
+    rename_meeting_parser.add_argument("run")
+    rename_meeting_parser.add_argument("title")
+
     subparsers.add_parser(
         "refresh-all-sessions",
         help="Refresh every saved dynamic session",
@@ -2949,6 +2968,12 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "sessions":
             payload = sessions_payload()
+
+        elif args.command == "rename-meeting":
+            payload = rename_meeting_payload(
+                args.run,
+                args.title,
+            )
 
         elif args.command == "refresh-all-sessions":
             payload = refresh_all_sessions_payload()

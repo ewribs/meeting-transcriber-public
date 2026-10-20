@@ -43,6 +43,14 @@ def get_display_title(
 
         title = title.replace("_", " ")
 
+        # Keep an acronym separate from a glued connector word, so
+        # "XYZandThird" becomes "XYZ and Third", not "XY Zand Third".
+        title = re.sub(
+            r"(?<=[A-Z]{2})(and|or|of|for|the|to|with|vs)(?=[A-Z])",
+            r" \1 ",
+            title,
+        )
+
         # Split CamelCase.
         title = re.sub(
             r"(?<=[a-z])(?=[A-Z])",
@@ -114,8 +122,14 @@ def create_meeting_metadata(
         "meeting_datetime": get_meeting_datetime(
             run_dir
         ),
-        "display_title": get_display_title(
-            run_dir
+        "display_title": (
+            existing_metadata.get("display_title")
+            if existing_metadata.get("title_custom")
+            and existing_metadata.get("display_title")
+            else get_display_title(run_dir)
+        ),
+        "title_custom": bool(
+            existing_metadata.get("title_custom")
         ),
         "superseded_by": existing_metadata.get(
             "superseded_by"

@@ -39,3 +39,7 @@ benchmark_runs/
 sync_backups/
 upgrade_snapshots/
 upgrade_cases.local.txt
+
+# Editor swap files
+*.swp
+*.swo

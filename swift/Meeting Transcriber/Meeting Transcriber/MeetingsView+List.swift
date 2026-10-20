@@ -42,6 +42,12 @@ extension MeetingsView {
             dragPreview(for: meeting)
         }
         .contextMenu {
+            Button("Rename…") {
+                openRenameMeeting(meeting)
+            }
+
+            Divider()
+
             meetingFolderMenu(for: meeting)
         }
     }

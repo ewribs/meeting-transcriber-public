@@ -121,6 +121,10 @@ struct MeetingsView: View {
     @AppStorage("ask.showFavorites") var showFavorites = true
     @State var dynamicEditorTarget: DynamicEditorTarget?
     @State var sessionRefreshedRuns: Set<String> = []
+    @State var renameMeetingTarget: Meeting?
+    @State var renameMeetingText = ""
+    @State var renameMeetingError: String?
+    @State var isRenamingMeeting = false
     @State var pendingDeleteSession: String?
     @State var renameSessionTarget: String?
     @State var renameSessionText = ""
@@ -698,6 +702,18 @@ struct MeetingsView: View {
             }
         } message: {
             Text(unpublishSuccessMessage ?? "The meeting was unpublished.")
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { renameMeetingTarget != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        renameMeetingTarget = nil
+                    }
+                }
+            )
+        ) {
+            renameMeetingSheet
         }
         .sheet(item: $folderSheet) { mode in
             VStack(

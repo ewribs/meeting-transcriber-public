@@ -196,6 +196,21 @@ nonisolated struct BackendService: Sendable {
 
     /// Re-evaluates the rules of every Dynamic session and saves the new
     /// member lists. Best effort; callers ignore failures.
+    /// Changes how a meeting's title is shown. The meeting's folder name
+    /// (its ID) is never changed.
+    func renameMeeting(
+        run: String,
+        title: String
+    ) async throws {
+        _ = try await runBridge(
+            arguments: [
+                "rename-meeting",
+                run,
+                title,
+            ]
+        )
+    }
+
     func refreshAllSessions() async throws {
         _ = try await runBridge(
             arguments: [
