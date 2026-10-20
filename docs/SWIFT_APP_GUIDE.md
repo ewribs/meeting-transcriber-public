@@ -181,6 +181,11 @@ Settings are split into three tabs.
 - *Folders:* Recordings, Working and Archive folders, and the archive status.
 - *Recording Retention:* how long local and archived source audio is kept.
   `0` for archived means keep forever.
+- *Backups:* shows the last backup, an optional **second backup folder**
+  (for example on a NAS) with **Choose…** and a connection status line, how
+  many backups to keep on this Mac (default 20) and in the second folder
+  (default 60), and **Back Up Now**. Values are saved with **Save**; Back Up
+  Now saves them first. Restoring stays on the command line.
 
 **Local AI** *(Save / Reload at the bottom)*
 
@@ -201,10 +206,12 @@ Settings are split into three tabs.
 
 ## Safety nets
 
-- **State backups.** The app keeps local copies of your folders and saved
-  sessions. From the project folder, `tools/mt backup` makes one,
-  `tools/mt backup --list` shows them, and `tools/mt backup --restore NAME`
-  restores one.
+- **State backups.** The app keeps local copies of your folders, saved
+  sessions and local-only project files. From the project folder,
+  `tools/mt backup` makes one, `tools/mt backup --list` shows them, and
+  `tools/mt backup --restore NAME` previews a restore (add `--apply` to do
+  it). `tools/mt backup --set-mirror PATH` also copies each backup to another
+  folder, such as one on a NAS.
 - **Recording recovery.** See above: unfinished recordings are finalized on
   the next launch.
 - **Plan before delete.** Destructive meeting operations show what will

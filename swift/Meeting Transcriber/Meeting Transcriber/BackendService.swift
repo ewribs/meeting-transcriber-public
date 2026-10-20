@@ -194,6 +194,73 @@ nonisolated struct BackendService: Sendable {
         )
     }
 
+    func runBackupNow() async throws -> BackupRunResponse {
+        let data = try await runBridge(
+            arguments: [
+                "backup-state"
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                BackupRunResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func loadBackupSettings() async throws -> BackupSettingsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "backup-settings"
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                BackupSettingsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func saveBackupSettings(
+        mirrorDir: String,
+        keepLocal: Int,
+        keepMirror: Int
+    ) async throws -> BackupSettingsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "save-backup-settings",
+                mirrorDir,
+                String(keepLocal),
+                String(keepMirror),
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                BackupSettingsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
     /// Re-evaluates the rules of every Dynamic session and saves the new
     /// member lists. Best effort; callers ignore failures.
     /// Changes how a meeting's title is shown. The meeting's folder name

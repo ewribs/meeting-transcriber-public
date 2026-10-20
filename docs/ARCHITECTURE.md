@@ -110,7 +110,7 @@ Whether the sidebar uses A–Z or the manual order is a Swift display preference
 ## Recovery and backups
 
 - **Recording recovery.** While recording, the Swift app writes raw Float32 audio to disk with a small sidecar JSON in `~/Library/Application Support/Meeting Transcriber/PendingRecordings/`. On launch it finalizes any leftover capture through `finalize-audio-recording`, then queues the result. A failed finalization keeps the raw file.
-- **State backups.** `state_backup.py` copies `meeting_folders.json`, `sidebar_order.json` and `query_sessions/*.json` into `local_backups/` inside the project (Git-ignored). A snapshot is written only when something changed, and the newest 20 are kept. Backing up never modifies the originals. Use `tools/mt backup`, `--list` and `--restore NAME`.
+- **State backups.** `state_backup.py` copies `meeting_folders.json`, `sidebar_order.json` and `query_sessions/*.json`, plus the project's local-only files (private ignore list, `tools/mt` and release helpers, `*.local.json` settings), into `local_backups/` inside the project (Git-ignored). A snapshot is written only when something changed, and the newest 20 are kept. If a second folder is configured (`backup_mirror_dir` in settings, set with `--set-mirror`), snapshots are also copied there. Backing up never modifies the originals. Use `tools/mt backup`, `--list` and `--restore NAME`.
 
 ## Installation metadata
 

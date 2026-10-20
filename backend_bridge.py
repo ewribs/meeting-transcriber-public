@@ -2112,10 +2112,102 @@ def save_favorite_prompts_payload(
 
 
 def backup_state_payload() -> dict[str, Any]:
-    from state_backup import backup_state, default_paths
+    from state_backup import (
+        backup_state,
+        default_keeps,
+        default_mirror,
+        default_paths,
+        default_project_dir,
+    )
 
     archive_dir, backup_root = default_paths()
-    return backup_state(archive_dir, backup_root)
+    keep_local, keep_mirror = default_keeps()
+    return backup_state(
+        archive_dir,
+        backup_root,
+        project_dir=default_project_dir(),
+        mirror_dir=default_mirror(),
+        keep=keep_local,
+        mirror_keep=keep_mirror,
+    )
+
+
+def backup_settings_payload() -> dict[str, Any]:
+    from state_backup import (
+        backup_status,
+        default_keeps,
+        default_mirror,
+        default_paths,
+    )
+
+    _archive_dir, backup_root = default_paths()
+    mirror_dir = default_mirror()
+    keep_local, keep_mirror = default_keeps()
+
+    return {
+        "schema_version": 1,
+        "settings": {
+            "mirror_dir": str(mirror_dir) if mirror_dir else "",
+            "keep_local": keep_local,
+            "keep_mirror": keep_mirror,
+        },
+        "status": backup_status(backup_root, mirror_dir),
+    }
+
+
+def save_backup_settings_payload(
+    mirror_dir: str,
+    keep_local: int,
+    keep_mirror: int,
+) -> dict[str, Any]:
+    from pathlib import Path
+
+    from app_settings import load_app_settings, save_app_settings
+    from state_backup import default_paths
+
+    text = str(mirror_dir or "").strip()
+
+    if text:
+        path = Path(text).expanduser()
+
+        if not path.is_absolute():
+            raise ValueError(
+                "The second backup folder must be a full path, "
+                "for example /Volumes/Transcribe/Backups."
+            )
+
+        _archive_dir, backup_root = default_paths()
+        resolved = path.resolve()
+        local_root = backup_root.resolve()
+
+        if resolved == local_root or local_root in resolved.parents:
+            raise ValueError(
+                "The second backup folder cannot be inside the "
+                "local backup folder."
+            )
+
+        text = str(path)
+
+    for label, value in (
+        ("On this Mac", keep_local),
+        ("In the second folder", keep_mirror),
+    ):
+        if not 1 <= int(value) <= 500:
+            raise ValueError(
+                f"Backups to keep ({label}) must be between 1 and 500."
+            )
+
+    settings = load_app_settings()
+    settings.update(
+        {
+            "backup_mirror_dir": text,
+            "backup_keep_local": int(keep_local),
+            "backup_keep_mirror": int(keep_mirror),
+        }
+    )
+    save_app_settings(settings)
+
+    return backup_settings_payload()
 
 
 def startup_retention_payload() -> dict[str, Any]:
@@ -2583,6 +2675,19 @@ def build_parser() -> argparse.ArgumentParser:
     rename_meeting_parser.add_argument("title")
 
     subparsers.add_parser(
+        "backup-settings",
+        help="Return backup settings and status as JSON",
+    )
+
+    save_backup_settings_parser = subparsers.add_parser(
+        "save-backup-settings",
+        help="Save backup settings",
+    )
+    save_backup_settings_parser.add_argument("mirror_dir")
+    save_backup_settings_parser.add_argument("keep_local", type=int)
+    save_backup_settings_parser.add_argument("keep_mirror", type=int)
+
+    subparsers.add_parser(
         "refresh-all-sessions",
         help="Refresh every saved dynamic session",
     )
@@ -2973,6 +3078,16 @@ def main(argv: list[str] | None = None) -> int:
             payload = rename_meeting_payload(
                 args.run,
                 args.title,
+            )
+
+        elif args.command == "backup-settings":
+            payload = backup_settings_payload()
+
+        elif args.command == "save-backup-settings":
+            payload = save_backup_settings_payload(
+                args.mirror_dir,
+                args.keep_local,
+                args.keep_mirror,
             )
 
         elif args.command == "refresh-all-sessions":

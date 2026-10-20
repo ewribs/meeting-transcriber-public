@@ -29,6 +29,9 @@ DEFAULT_SETTINGS = {
     "m4a_retention_days": 30,
     "archived_m4a_retention_days": 365,
     "prompt_favorites": [],
+    "backup_mirror_dir": "",
+    "backup_keep_local": 20,
+    "backup_keep_mirror": 60,
 }
 
 

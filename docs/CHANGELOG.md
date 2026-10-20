@@ -6,6 +6,8 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+- Preferences → Storage has a new Backups section: second backup folder, keep counts for each location, last-backup status and Back Up Now.
+
 ### Added (Meetings workspace)
 - Folders for organizing meetings, with a Meetings sidebar (All Meetings, Recent, Unpublished, Not in a Folder, Folders, Dynamic and Fixed sessions) and quick **Add to** menus.
 - Sort folders and sessions A–Z or drag them into a manual order; the order is saved.
@@ -19,7 +21,8 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ### Added (safety)
 - Unfinished recordings are finalized and queued automatically at the next launch; unrecoverable captures are kept.
-- Automatic local backups of folders, session order and saved sessions, with `tools/mt backup` to list and restore.
+- Automatic local backups of folders, session order, saved sessions and local-only project files (private ignore list, helper scripts, local settings), with `tools/mt backup` to list and restore, and an optional second copy on another volume such as a NAS.
+- `tools/mt rebuild-index` to rebuild the meeting index after moving the archive folder.
 
 ### Changed
 - Removed the standalone Sessions tab; sessions are managed in the Meetings sidebar, and Search results for sessions open there.

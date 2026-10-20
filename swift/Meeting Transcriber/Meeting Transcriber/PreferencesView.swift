@@ -16,6 +16,12 @@ struct PreferencesView: View {
     @State private var outputDir = ""
     @State private var archiveDir = ""
     @State private var recordingsDir = ""
+    @State private var backupMirrorDir = ""
+    @State private var backupKeepLocal = 20
+    @State private var backupKeepMirror = 60
+    @State private var backupStatus = BackupStatus.empty
+    @State private var backupMessage: String?
+    @State private var isBackingUp = false
     @State private var llmBackend = "auto"
     @State private var llmModel = ""
     @State private var llmContextSize = 0
@@ -262,6 +268,23 @@ struct PreferencesView: View {
                     .secondary
                 )
             }
+
+            BackupSettingsSection(
+                mirrorDir: $backupMirrorDir,
+                keepLocal: $backupKeepLocal,
+                keepMirror: $backupKeepMirror,
+                status: backupStatus,
+                message: backupMessage,
+                isBusy: isBackingUp,
+                chooseFolder: {
+                    chooseFolder(binding: $backupMirrorDir)
+                },
+                backUpNow: {
+                    Task {
+                        await backUpNow()
+                    }
+                }
+            )
         }
         .formStyle(.grouped)
     }
@@ -529,6 +552,64 @@ struct PreferencesView: View {
         .padding(.top, 8)
     }
 
+    private func loadBackupSettings(
+        preserveEdits: Bool
+    ) async {
+        guard let response = try? await backend.loadBackupSettings() else {
+            return
+        }
+
+        backupStatus = response.status
+
+        if !preserveEdits {
+            backupMirrorDir = response.settings.mirrorDir
+            backupKeepLocal = response.settings.keepLocal
+            backupKeepMirror = response.settings.keepMirror
+        }
+    }
+
+    /// Saves the backup settings first so the folder you just chose is
+    /// the one used, then runs a backup.
+    private func backUpNow() async {
+        guard !isBackingUp else {
+            return
+        }
+
+        isBackingUp = true
+        backupMessage = nil
+        errorMessage = nil
+
+        defer {
+            isBackingUp = false
+        }
+
+        do {
+            _ = try await backend.saveBackupSettings(
+                mirrorDir: backupMirrorDir,
+                keepLocal: backupKeepLocal,
+                keepMirror: backupKeepMirror
+            )
+
+            let result = try await backend.runBackupNow()
+            backupMessage = backupResultText(result)
+            await loadBackupSettings(preserveEdits: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func backupResultText(
+        _ result: BackupRunResponse
+    ) -> String {
+        var text: String = result.reason
+
+        if let mirror = result.mirror, mirror.status != "off" {
+            text += " Second folder: " + mirror.reason
+        }
+
+        return text
+    }
+
     @ViewBuilder
     private func pathRow(
         label: String,
@@ -609,6 +690,10 @@ struct PreferencesView: View {
             archiveStatus =
                 response
                     .archiveStatus
+
+            await loadBackupSettings(
+                preserveEdits: preserveEdits
+            )
 
             if !preserveEdits {
                 performanceProfile =
@@ -754,6 +839,12 @@ struct PreferencesView: View {
                         archivedM4aRetentionDays:
                             archivedM4aRetentionDays
                     )
+
+            _ = try await backend.saveBackupSettings(
+                mirrorDir: backupMirrorDir,
+                keepLocal: backupKeepLocal,
+                keepMirror: backupKeepMirror
+            )
 
             savedMessage =
                 response.message

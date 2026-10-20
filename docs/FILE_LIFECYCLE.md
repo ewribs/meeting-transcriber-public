@@ -226,9 +226,14 @@ Publish & Archive
 Folders, the manual sidebar order and saved sessions are small files that cannot be regenerated from meeting audio, so they are protected separately from audio:
 
 - At each app launch, a snapshot is copied to `local_backups/` on the local disk, away from the archive volume.
+- Each snapshot also holds the project's local-only files that git does not track: the private ignore list (`.git/info/exclude`), the `tools/mt` and release helpers, and the `*.local.json` settings files, stored under `project/` in the snapshot.
 - A snapshot is only written when something changed, and the newest 20 are kept.
 - Backing up never modifies or deletes the originals.
-- `tools/mt backup --list` shows snapshots; `tools/mt backup --restore NAME` previews a restore and `--apply` performs it.
+- `tools/mt backup --list` shows snapshots; `tools/mt backup --restore NAME` previews a restore (marking each file as same, differs or missing now) and `--apply` performs it.
+
+### Second copy on another volume
+
+`tools/mt backup --set-mirror PATH` also copies every snapshot to a folder you choose, for example a `Backups` folder on the NAS. The folder must already exist. If its volume is not connected the copy is skipped, and it catches up the next time a backup runs. The second folder keeps the newest 60 snapshots, and `--restore NAME` falls back to it when a snapshot is no longer local. `tools/mt backup --clear-mirror` turns it off.
 
 Deleting a meeting removes it from every saved session that references it, and drops that session's cached Changes comparison. Folder entries for a deleted meeting are not rewritten; a folder simply shows only the meetings that still exist.
 
