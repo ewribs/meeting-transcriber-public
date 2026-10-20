@@ -307,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         print("Release audit: no findings.")
 
     print(f"Release audit summary: {len(errors)} error(s), {len(warnings)} warning(s).")
+    if any(f.code == "private-name-derived" for f in errors):
+        print("Some errors are words taken from meeting names. Review them with: tools/mt audit-words")
     if errors or (args.strict_warnings and warnings):
         return 1
     return 0
