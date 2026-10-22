@@ -187,6 +187,28 @@ http://localhost:11434
 Setup does not send meeting content to a hosted AI endpoint. Pulling an Ollama
 model necessarily downloads model files from the Ollama registry.
 
+## Voice recognition (optional)
+
+Voice recognition is not part of setup and is off by default. Nothing in the
+setup scripts installs it.
+
+If you choose to use it:
+
+- It needs a separate Python environment with PyTorch and the pyannote models
+  (roughly 1 to 2 GB). You create that environment yourself and point the app
+  at it with `python3 voice_cli.py set-python PATH`.
+- The models are gated on Hugging Face. Downloading them requires a free
+  account and accepting their terms, and the download goes to Hugging Face. The
+  app never includes, stores or sends an access token on your behalf.
+- No audio or fingerprints are uploaded. The analysis runs on your Mac.
+- Voice fingerprints are biometric data about other people. They are stored
+  only in `~/Library/Application Support/Meeting Transcriber/voices/` with
+  private file permissions, and are never copied into meetings, exports,
+  archives, the project folder or the repository. They can be deleted per
+  person (`python3 voice_cli.py people --delete NAME`).
+- Each meeting's `speakers.json` contains only timings, voice numbers and
+  names, never audio or fingerprints.
+
 ## Native recording is optional during setup
 
 A macOS aggregate input named `Transcribe` is required only for Meeting

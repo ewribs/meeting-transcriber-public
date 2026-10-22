@@ -174,7 +174,7 @@ Search looks across all indexed meeting and session content.
 
 ## Preferences (⌘,)
 
-Settings are split into three tabs.
+Settings are split into four tabs.
 
 **Storage** *(Save / Reload at the bottom)*
 
@@ -201,6 +201,16 @@ Settings are split into three tabs.
   for folders and sessions.
 - *Notices and Confirmations:* notices, confirm before deleting a folder, and
   showing prompt favorites in Ask.
+
+**Voices** *(applies instantly; nothing to save)*
+
+- *Voice Recognition:* a switch to recognize voices after each transcription,
+  and a switch to list the people who spoke as the meeting's participants. The
+  first switch cannot be turned on until the voice tools are set up and at
+  least one person has a voice fingerprint; the tab says what is missing.
+- *Status:* how many people have a fingerprint and the most recent automatic
+  runs. Naming voices is done from the command line for now; see the
+  [User Guide](USER_GUIDE.md#voice-recognition-optional).
 
 ---
 

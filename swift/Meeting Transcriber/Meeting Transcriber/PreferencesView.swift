@@ -5,6 +5,7 @@ private enum PreferencesTab: String {
     case storage
     case localAI
     case meetings
+    case voices
 }
 
 struct PreferencesView: View {
@@ -127,9 +128,15 @@ struct PreferencesView: View {
                         Label("Meetings", systemImage: "list.bullet.rectangle")
                     }
                     .tag(PreferencesTab.meetings)
+
+                VoicesPreferencesTab()
+                    .tabItem {
+                        Label("Voices", systemImage: "waveform")
+                    }
+                    .tag(PreferencesTab.voices)
             }
 
-            if selectedTab != .meetings {
+            if selectedTab != .meetings && selectedTab != .voices {
                 bottomBar
             }
         }

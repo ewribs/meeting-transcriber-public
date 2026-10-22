@@ -8,10 +8,13 @@ from pathlib import Path
 from typing import Callable
 
 from preflight import run_preflight
+from voice_auto import run_voice_step
+from app_settings import load_app_settings
 
 from datetime import datetime
 
 from config import (
+    ARCHIVE_DIR,
     LOGS_DIR,
     MEETINGS_DIR,
     OUTPUT_DIR,
@@ -565,6 +568,20 @@ def transcribe_meeting(
         progress_callback=progress_callback,
     )
     html_path = completed_artifacts["transcript_html_path"]
+
+    _report_progress(
+        progress_callback,
+        "Recognizing voices...",
+        98,
+    )
+    voice_status = run_voice_step(
+        run_dir,
+        meeting_path,
+        load_app_settings(),
+        archive_dir=ARCHIVE_DIR,
+    )
+    if voice_status != "off":
+        print(f"Voice recognition: {voice_status}")
 
     elapsed_seconds = time.perf_counter() - start_time
     elapsed_minutes = int(elapsed_seconds // 60)

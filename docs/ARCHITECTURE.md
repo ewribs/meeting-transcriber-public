@@ -44,7 +44,8 @@ When the app starts it runs, in order and best effort: audio retention, a state 
 - local state backups (`backup-state`) and startup retention;
 - audio-contract validation/finalization;
 - prompt favorites;
-- preferences and performance-profile preview/save.
+- preferences and performance-profile preview/save;
+- voice recognition settings and status (`voice-settings`, `save-voice-settings`).
 
 The bridge should reuse existing Python services rather than duplicating business logic.
 
@@ -64,9 +65,36 @@ M4A source
   +-- meeting_memory.json
   +-- deterministic final summary composition
   +-- metadata / HTML / OneNote artifacts
+  +-- voice recognition (optional; speakers.json and participants)
 ```
 
 The meeting-memory pipeline is intentionally precision-sensitive. Decisions, commitments/follow-ups, and open questions are grounded/reconciled before final structured composition. Avoid adding independent post-processing layers without integration tests that exercise the production path.
+
+## Voice recognition (optional)
+
+Voice recognition replaces the generic `Remote` speaker with real names. It is off by default and never required: the app and the pipeline behave exactly as before without it.
+
+| Module | Role |
+| --- | --- |
+| `voice_worker.py` | The only part that needs PyTorch and the pyannote models. Runs in its own Python environment, called as a subprocess; returns voices, timings and fingerprints. |
+| `voice_profiles.py` | Fingerprint store and matching rules (thresholds, gaps, same-person links). Pure Python, tested with synthetic fingerprints. |
+| `voice_service.py` | Calls the worker, builds a meeting's `speakers.json`, confirms a voice and learns from it. |
+| `voice_sources.py` | Finds one-on-one recordings to learn from, locates source audio, and makes short audio clips for listening before naming. |
+| `voice_groups.py` | Groups unnamed voices that keep coming back across meetings so one answer names many. |
+| `voice_participants.py` | Builds the participant list from the voices heard (plus names in the title, marked low confidence) and applies or restores it. |
+| `voice_auto.py` | The optional step after a transcription, and the run log. Catches every failure. |
+| `voice_cli.py` | Command-line workflow for all of the above. |
+
+Per-meeting results are written to `speakers.json` next to the transcript. It holds timings, voice ids and names only, and is safe to archive and publish like the rest of a meeting. Fingerprints are stored separately in the Application Support folder (`voices/`), with private file permissions, and are never copied to meetings, exports, archives, backups of meetings or the repository.
+
+Design rules:
+
+- Only the Remote track is analyzed; the Mic track is the user.
+- A voice is named only when its best match is clearly above the runner-up. Otherwise it stays unnamed.
+- Names the user confirms by hand are kept when a meeting is re-analyzed.
+- Failures are logged to `voices/auto.log` and never change the transcript.
+
+`backend_bridge.py` exposes `voice-settings` and `save-voice-settings` for the Preferences → Voices tab. Python remains the source of truth.
 
 ## Local AI execution
 

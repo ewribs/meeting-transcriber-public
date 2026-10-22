@@ -6,7 +6,13 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
-- Nothing yet.
+### Added (voice recognition, optional and off by default)
+- Voice fingerprints, learned locally, that turn the generic "Remote" speaker into real names. Fingerprints stay on your Mac and are never saved in meetings, exports, archives or the repository.
+- A command-line workflow (`voice_cli.py`) to learn people from one-on-one recordings, list recurring unnamed voices, listen to short clips before naming anyone, and name a voice or a whole group of recurring voices at once. Re-analyzing meetings keeps names you confirmed by hand.
+- An optional step after each transcription ("Recognizing voices…") that identifies the voices in the new meeting and writes a `speakers.json` next to it. It never affects the transcript if it fails, and every run is logged so it can be checked outside Terminal.
+- Voice-based participants: the meeting list can show the people who actually spoke instead of names guessed from the title and transcript. Previews and undo are available (`participants-new`, `--restore`).
+- Preferences → Voices: a switch for automatic recognition, a switch for voice-based participants, the number of people with a fingerprint, and the most recent automatic runs.
+- `show --clips --count N` saves several short audio clips of each voice so you can be sure of who is who.
 
 ## v1.3 — 2026-10-20
 

@@ -2210,6 +2210,101 @@ def save_backup_settings_payload(
     return backup_settings_payload()
 
 
+def _voice_readiness(settings: dict, people_count: int) -> tuple[bool, str]:
+    """(ready, reason). Voice recognition needs the voice tools and at least
+    one fingerprinted person."""
+    if not settings.get("voice_python"):
+        return False, (
+            "The voice tools are not set up on this Mac yet. "
+            "In Terminal, run: python3 voice_cli.py set-python PATH_TO_PYTHON"
+        )
+    if people_count < 1:
+        return False, (
+            "No voices are fingerprinted yet. Name a few people first "
+            "(python3 voice_cli.py unknowns)."
+        )
+    return True, ""
+
+
+def voice_settings_payload(
+    store_path: Any = None,
+    log_path: Any = None,
+) -> dict[str, Any]:
+    from app_settings import load_app_settings
+    import voice_auto
+    import voice_profiles
+    import voice_service
+
+    settings = load_app_settings()
+
+    try:
+        people_count = len(
+            voice_profiles.VoiceStore.load(
+                store_path or voice_service.STORE_PATH
+            ).people()
+        )
+    except Exception:
+        people_count = 0
+
+    ready, reason = _voice_readiness(settings, people_count)
+
+    return {
+        "schema_version": 1,
+        "settings": {
+            "enabled": bool(settings.get("voice_recognition_enabled")),
+            "update_participants": bool(
+                settings.get("voice_update_participants", True)
+            ),
+        },
+        "status": {
+            "ready": ready,
+            "reason": reason,
+            "people_count": people_count,
+            "recent": voice_auto.recent_log(
+                5, log_path or voice_auto.LOG_PATH
+            ),
+        },
+    }
+
+
+def save_voice_settings_payload(
+    enabled: str,
+    update_participants: str,
+    store_path: Any = None,
+    log_path: Any = None,
+) -> dict[str, Any]:
+    from app_settings import load_app_settings, save_app_settings
+
+    values = {}
+
+    for label, value in (
+        ("enabled", enabled),
+        ("update_participants", update_participants),
+    ):
+        text = str(value).strip().lower()
+
+        if text not in ("on", "off"):
+            raise ValueError(f"{label} must be on or off.")
+
+        values[label] = text == "on"
+
+    current = voice_settings_payload(store_path, log_path)
+
+    if values["enabled"] and not current["status"]["ready"]:
+        raise ValueError(current["status"]["reason"])
+
+    settings = load_app_settings()
+    settings.update(
+        {
+            "voice_recognition_enabled": values["enabled"],
+            "voice_update_participants": values["update_participants"],
+        }
+    )
+    save_app_settings(settings)
+
+    return voice_settings_payload(store_path, log_path)
+
+
 def startup_retention_payload() -> dict[str, Any]:
     from startup_maintenance import run_startup_retention
 
@@ -2688,6 +2783,18 @@ def build_parser() -> argparse.ArgumentParser:
     save_backup_settings_parser.add_argument("keep_mirror", type=int)
 
     subparsers.add_parser(
+        "voice-settings",
+        help="Return voice recognition settings and status as JSON",
+    )
+
+    save_voice_settings_parser = subparsers.add_parser(
+        "save-voice-settings",
+        help="Save voice recognition settings",
+    )
+    save_voice_settings_parser.add_argument("enabled")
+    save_voice_settings_parser.add_argument("update_participants")
+
+    subparsers.add_parser(
         "refresh-all-sessions",
         help="Refresh every saved dynamic session",
     )
@@ -3088,6 +3195,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.mirror_dir,
                 args.keep_local,
                 args.keep_mirror,
+            )
+
+        elif args.command == "voice-settings":
+            payload = voice_settings_payload()
+
+        elif args.command == "save-voice-settings":
+            payload = save_voice_settings_payload(
+                args.enabled,
+                args.update_participants,
             )
 
         elif args.command == "refresh-all-sessions":

@@ -261,6 +261,51 @@ nonisolated struct BackendService: Sendable {
         }
     }
 
+    func loadVoiceSettings() async throws -> VoiceSettingsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-settings"
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceSettingsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func saveVoiceSettings(
+        enabled: Bool,
+        updateParticipants: Bool
+    ) async throws -> VoiceSettingsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "save-voice-settings",
+                enabled ? "on" : "off",
+                updateParticipants ? "on" : "off",
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceSettingsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
     /// Re-evaluates the rules of every Dynamic session and saves the new
     /// member lists. Best effort; callers ignore failures.
     /// Changes how a meeting's title is shown. The meeting's folder name
