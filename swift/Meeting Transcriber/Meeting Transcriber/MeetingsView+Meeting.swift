@@ -32,6 +32,22 @@ extension MeetingsView {
                 isPublished: meeting.isPublished
             )
 
+            Button {
+                voicesSheetTarget = VoiceSheetTarget(
+                    run: meeting.run,
+                    title: meeting.title
+                )
+            } label: {
+                Label(
+                    "Voices…",
+                    systemImage: "waveform"
+                )
+            }
+            .buttonStyle(.bordered)
+            .help(
+                "Listen to the voices in this meeting and name the ones you know."
+            )
+
             if !meeting.isPublished {
                 Button(role: .destructive) {
                     Task {
@@ -229,6 +245,39 @@ extension MeetingsView {
             sections.append(
                 "# Topics\n\n\(topics)"
             )
+        }
+
+        if let speakers = detail.speakers {
+            var speakerLines: [String] = []
+
+            if speakers.remoteSilent {
+                speakerLines.append(
+                    "The remote audio was not captured, so voices could not be told apart."
+                )
+            } else {
+                for person in speakers.people {
+                    speakerLines.append(
+                        "- **\(person.name)** — \(String(format: "%.1f", person.minutes)) min"
+                    )
+                }
+
+                if speakers.unnamedCount > 0 {
+                    let noun = speakers.unnamedCount == 1
+                        ? "unnamed voice"
+                        : "unnamed voices"
+
+                    speakerLines.append(
+                        "- \(speakers.unnamedCount) \(noun) — \(String(format: "%.1f", speakers.unnamedMinutes)) min"
+                    )
+                }
+            }
+
+            if !speakerLines.isEmpty {
+                sections.append(
+                    "# Who Spoke\n\n"
+                    + speakerLines.joined(separator: "\n\n")
+                )
+            }
         }
 
         if let processing = detail.processing {

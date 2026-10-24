@@ -1,6 +1,6 @@
 # User Guide
 
-Meeting Transcriber is organized into three workspaces: **Transcribe**, **Meetings**, and **Search**. For a screen-by-screen tour and how-to recipes, see the [Swift App Guide](SWIFT_APP_GUIDE.md); this page describes behavior.
+Meeting Transcriber is organized into four workspaces: **Transcribe**, **Meetings**, **Speakers**, and **Search**. For a screen-by-screen tour and how-to recipes, see the [Swift App Guide](SWIFT_APP_GUIDE.md); this page describes behavior.
 
 ## Transcribe
 
@@ -91,7 +91,7 @@ Preferences has four tabs. **Storage** and **Local AI** are saved with the **Sav
 - **Storage** — folders and recording retention.
 - **Local AI** — backend, model, performance profile and context override.
 - **Meetings** — "Recent" window, sort order, list density, sidebar rows and ordering, notices, confirmations, and prompt favorites.
-- **Voices** — switch automatic voice recognition on or off and see its recent runs (see [Voice recognition](#voice-recognition-optional)).
+- **Voices** — switch automatic voice recognition on or off, choose how long unnamed voices are remembered, and see recent runs (see [Voice recognition](#voice-recognition-optional)).
 
 ### Storage
 
@@ -136,7 +136,7 @@ An archived retention value of `0` means **Forever**.
 
 By default every voice on the call except yours is labeled **Remote**. Voice recognition can learn who people are from their voices and use that to show the real participants of a meeting. It is off by default and runs entirely on your Mac.
 
-**What you need.** The voice models need PyTorch and the pyannote models, which are large, so they live in their own Python environment, separate from the app's. The models are gated: you need a free Hugging Face account and must accept the models' terms once. The app never includes or sends an access token. Tell the app where that environment is with `python3 voice_cli.py set-python PATH_TO_PYTHON`. Setup and naming are command-line steps for now.
+**What you need.** The voice models need PyTorch and the pyannote models, which are large, so they live in their own Python environment, separate from the app's. The models are gated: you need a free Hugging Face account and must accept the models' terms once. The app never includes or sends an access token. Tell the app where that environment is with `python3 voice_cli.py set-python PATH_TO_PYTHON`. Setting up the voice environment is a command-line step; naming people can be done in the app (see below) or in Terminal.
 
 **How it learns.** Fingerprints are stored only on your Mac. Naming is always your decision: a voice is named only when it clearly matches one person and nobody else, and a voice with too little speech is left unnamed rather than guessed.
 
@@ -145,13 +145,22 @@ By default every voice on the call except yours is labeled **Remote**. Voice rec
 3. **Name recurring voices.** `python3 voice_cli.py unknowns` lists unnamed voices that keep coming back, grouped across meetings. Listen before you name: `unknowns --clips N` saves short audio clips of group N to `~/voice-clips`, then `unknowns --name N NAME` names the whole group. Group numbers can change after each re-run, so check the list just before naming, and name the highest number first.
 4. **Name a voice in one meeting.** `python3 voice_cli.py show RUN` lists the voices in a meeting (`--clips --count 3` saves several clips of each so you can be sure), and `confirm RUN NAME --voice NN` names one. Skip voices you cannot place, and voices with less than a minute of speech: a weak fingerprint can make other matches uncertain. If a name disappears from a meeting after you add a new person, confirm it again.
 
+**Naming people in the app.** Two places let you listen and name:
+
+- **Speakers** (sidebar) lists unnamed voices that keep coming back across meetings, biggest first. Each card has **Listen** (three short clips), a name field with a **Known people** menu, and **Name Group**. Naming asks you to confirm, then names the voice in every meeting in the group and teaches the app what that person sounds like. Groups that may mix more than one person are marked, so listen carefully first.
+- **Voices…** in a meeting's header (and **Name Voices in a Meeting** on the Speakers screen) lists every voice in that one meeting, so you can name a voice right after a meeting even if it has not appeared in other meetings yet. It names only the voice you choose. A voice with very little speech can be labeled in that meeting, but the app does not learn from it.
+
+Not every voice is worth naming. On a Speakers card, **Hide for Now** moves the group to a collapsed *Hidden* section to come back to later, and **Don't Track** moves it to *Not tracked* for people you never want to label. Both are remembered per meeting voice only, with no fingerprint saved, and **Bring Back** undoes either one. A hidden or ignored group shows again if a later meeting adds a new voice to it.
+
+After you name someone, the app re-checks your other meetings against what it just learned. This takes seconds and uses the fingerprints it already saved, so it needs no audio and no voice tools (`python3 voice_cli.py rematch` does the same from Terminal). Meetings whose saved fingerprints are gone need `identify-all --redo` instead. Short listening clips are deleted when you leave the Speakers screen or quit the app.
+
 **Turn it on.** In Preferences → Voices, switch on **Recognize voices after each transcription** (or run `python3 voice_cli.py auto on`). After each transcription the app then recognizes the voices in the new meeting. This adds roughly half a minute and never affects the transcript if it fails. The Voices tab shows how many people have a fingerprint and the most recent automatic runs; the same log is printed by `python3 voice_cli.py auto`.
 
 **Participants.** With **List the people who spoke as the meeting's participants** on, the meeting list shows who was actually heard, not names guessed from the title or mentioned in the transcript. Names in the title that were not heard are kept, as lower confidence. Meetings without usable voice data keep their old list. To apply this to existing meetings: `python3 voice_cli.py participants` compares the two methods, `participants-new` previews the change, `participants-new --apply` writes it (`--restore` puts the old lists back), and `tools/mt rebuild-index` refreshes the sidebar.
 
 **When the remote audio was not captured.** If a call was taken on speakerphone, the Remote track is silent and the other voices are only in your Mic track. The meeting is marked "remote not captured" and no voices are named.
 
-**Privacy.** Voice fingerprints are biometric data about other people. They are stored only in the app's Application Support folder with private permissions, and are never saved in meetings, exports, archives or the repository. Each meeting's `speakers.json` holds only timings, voice numbers and names. See [Setup & Security](SETUP_AND_SECURITY.md#voice-recognition-optional).
+**Privacy.** Voice fingerprints are biometric data about other people. They are stored only in the app's Application Support folder with private permissions, and are never saved in meetings, exports, archives or the repository. The fingerprints kept for voices that have no name yet are deleted after six months by default; change this in Preferences → Voices, or choose Never delete. Named people are kept until you delete them. Each meeting's `speakers.json` holds only timings, voice numbers and names. See [Setup & Security](SETUP_AND_SECURITY.md#voice-recognition-optional).
 
 ## Recovery behavior
 

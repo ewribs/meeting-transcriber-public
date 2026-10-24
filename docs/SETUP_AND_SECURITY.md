@@ -208,6 +208,12 @@ If you choose to use it:
   person (`python3 voice_cli.py people --delete NAME`).
 - Each meeting's `speakers.json` contains only timings, voice numbers and
   names, never audio or fingerprints.
+- Fingerprints of voices that have no name yet are kept only so they can be
+  matched across meetings. They are deleted after six months by default
+  (Preferences → Voices lets you choose a shorter or longer time, or never).
+- Short audio clips made so you can listen before naming someone are deleted
+  when you leave the Speakers screen or quit the app.
+- Hiding or ignoring a voice saves only meeting and voice ids, no fingerprint.
 
 ## Native recording is optional during setup
 

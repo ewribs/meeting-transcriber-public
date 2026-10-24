@@ -24,9 +24,10 @@ class VoiceSettingsTests(unittest.TestCase):
     def payload(self):
         return backend_bridge.voice_settings_payload(self.store_path, self.log_path)
 
-    def save(self, enabled, update="on"):
+    def save(self, enabled, update="on", days=None):
         return backend_bridge.save_voice_settings_payload(
-            enabled, update, self.store_path, self.log_path)
+            enabled, update, days,
+            store_path=self.store_path, log_path=self.log_path)
 
     def add_person(self):
         store = vp.VoiceStore.load(self.store_path)
@@ -40,6 +41,20 @@ class VoiceSettingsTests(unittest.TestCase):
         self.assertFalse(payload["status"]["ready"])
         self.assertIn("not set up", payload["status"]["reason"])
         self.assertEqual(payload["status"]["people_count"], 0)
+
+    def test_keep_time_defaults_to_six_months_and_can_change(self):
+        self.assertEqual(self.payload()["settings"]["pending_days"], 180)
+        app_settings.save_app_settings({"voice_python": "/x/python"})
+        self.add_person()
+        self.assertEqual(self.save("off", "on", "365")["settings"]["pending_days"], 365)
+        self.assertEqual(self.save("off", "on", "0")["settings"]["pending_days"], 0)
+        # Leaving it out keeps what is saved.
+        self.assertEqual(self.save("off", "on")["settings"]["pending_days"], 0)
+
+    def test_bad_keep_times_are_refused(self):
+        for bad in ("-1", "abc", "99999", ""):
+            with self.assertRaises(ValueError):
+                self.save("off", "on", bad)
 
     def test_cannot_turn_on_without_voice_tools(self):
         with self.assertRaises(ValueError):

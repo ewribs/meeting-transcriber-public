@@ -163,6 +163,7 @@ def meeting_detail_payload(run: str) -> dict[str, Any]:
             "open_questions": detail.get("open_questions", []),
             "follow_ups": detail.get("follow_ups", []),
             "processing": detail.get("processing"),
+            "speakers": detail.get("speakers"),
             "has_summary": bool(
                 detail.get("has_summary")
             ),
@@ -2255,6 +2256,7 @@ def voice_settings_payload(
             "update_participants": bool(
                 settings.get("voice_update_participants", True)
             ),
+            "pending_days": voice_service.pending_days_setting(settings),
         },
         "status": {
             "ready": ready,
@@ -2270,6 +2272,7 @@ def voice_settings_payload(
 def save_voice_settings_payload(
     enabled: str,
     update_participants: str,
+    pending_days: str | None = None,
     store_path: Any = None,
     log_path: Any = None,
 ) -> dict[str, Any]:
@@ -2288,6 +2291,19 @@ def save_voice_settings_payload(
 
         values[label] = text == "on"
 
+    days = None
+
+    if pending_days is not None:
+        try:
+            days = int(str(pending_days).strip())
+        except ValueError:
+            days = -1
+
+        if not 0 <= days <= 3650:
+            raise ValueError(
+                "Keep time must be a number of days from 0 (never delete) to 3650."
+            )
+
     current = voice_settings_payload(store_path, log_path)
 
     if values["enabled"] and not current["status"]["ready"]:
@@ -2300,9 +2316,213 @@ def save_voice_settings_payload(
             "voice_update_participants": values["update_participants"],
         }
     )
+
+    if days is not None:
+        settings["voice_pending_days"] = days
+
     save_app_settings(settings)
 
     return voice_settings_payload(store_path, log_path)
+
+
+def _voice_review_context():
+    import config
+    import voice_profiles
+    import voice_service
+
+    store = voice_profiles.VoiceStore.load(voice_service.STORE_PATH)
+    return (
+        config.OUTPUT_DIR,
+        config.MEETINGS_DIR,
+        config.ARCHIVE_DIR,
+        voice_service.PENDING_DIR,
+        store,
+    )
+
+
+def voice_groups_payload() -> dict[str, Any]:
+    import voice_review
+
+    output_dir, _meetings, archive_dir, pending_dir, store = (
+        _voice_review_context()
+    )
+    _runs, groups = voice_review.build_groups(
+        output_dir, archive_dir, pending_dir, store
+    )
+    state = voice_review.load_state()
+
+    described = []
+    for group in groups:
+        info = voice_review.describe_group(group)
+        info["status"] = voice_review.group_status(group, state)
+        described.append(info)
+
+    return {
+        "schema_version": 1,
+        "groups": described,
+        "people": sorted(
+            (person.name for person in store.people()),
+            key=str.casefold,
+        ),
+    }
+
+
+def voice_group_clips_payload(
+    group_id: str,
+    count: int = 3,
+) -> dict[str, Any]:
+    import voice_review
+
+    output_dir, meetings_dir, archive_dir, pending_dir, store = (
+        _voice_review_context()
+    )
+    runs, groups = voice_review.build_groups(
+        output_dir, archive_dir, pending_dir, store
+    )
+    group = voice_review.find_group(groups, group_id)
+    clips = voice_review.make_group_clips(
+        group,
+        runs,
+        meetings_dir,
+        archive_dir,
+        voice_review.CLIPS_DIR,
+        count=max(1, min(int(count), 6)),
+    )
+
+    return {"schema_version": 1, "clips": clips}
+
+
+def voice_name_group_payload(
+    group_id: str,
+    name: str,
+) -> dict[str, Any]:
+    import voice_review
+    import voice_service
+
+    output_dir, _meetings, archive_dir, pending_dir, store = (
+        _voice_review_context()
+    )
+    runs, groups = voice_review.build_groups(
+        output_dir, archive_dir, pending_dir, store
+    )
+    group = voice_review.find_group(groups, group_id)
+    result = voice_review.name_group(
+        group, runs, name, store, pending_dir, archive_dir
+    )
+    store.save(voice_service.STORE_PATH)
+
+    # Re-check every meeting against the new fingerprints, using the ones
+    # already saved. Naming has succeeded either way, so a problem here is
+    # reported but never undoes it.
+    try:
+        counts = voice_review.rematch_everything(
+            output_dir, archive_dir, pending_dir, store
+        )
+        rematch = {**counts, "summary": voice_review.rematch_summary(counts)}
+    except Exception as error:
+        rematch = {"error": str(error)}
+
+    return {"schema_version": 1, **result, "rematch": rematch}
+
+
+def _meeting_run(run: str):
+    import voice_review
+
+    output_dir, meetings_dir, archive_dir, pending_dir, store = (
+        _voice_review_context()
+    )
+    folder = voice_review.find_run(run, output_dir, archive_dir)
+    return folder, output_dir, meetings_dir, archive_dir, pending_dir, store
+
+
+def voice_meeting_payload(run: str) -> dict[str, Any]:
+    import voice_review
+
+    folder, _o, _m, _a, pending_dir, store = _meeting_run(run)
+    payload = voice_review.meeting_voices(folder, pending_dir)
+    payload["people"] = sorted(
+        (person.name for person in store.people()), key=str.casefold)
+    payload["schema_version"] = 1
+    return payload
+
+
+def voice_meeting_clips_payload(
+    run: str,
+    voice_id: str,
+    count: int = 3,
+) -> dict[str, Any]:
+    import voice_review
+
+    folder, _o, meetings_dir, archive_dir, _p, _s = _meeting_run(run)
+    clips = voice_review.make_voice_clips(
+        folder, voice_id, meetings_dir, archive_dir, voice_review.CLIPS_DIR,
+        count=max(1, min(int(count), 6)))
+    return {"schema_version": 1, "clips": clips}
+
+
+def voice_meeting_name_payload(
+    run: str,
+    voice_id: str,
+    name: str,
+    also_similar: str = "no",
+) -> dict[str, Any]:
+    import voice_review
+    import voice_service
+
+    folder, output_dir, _m, archive_dir, pending_dir, store = _meeting_run(run)
+    result = voice_review.name_meeting_voice(
+        folder, voice_id, name, store, pending_dir, archive_dir,
+        only_this=str(also_similar).strip().lower() != "yes")
+    store.save(voice_service.STORE_PATH)
+
+    try:
+        counts = voice_review.rematch_everything(
+            output_dir, archive_dir, pending_dir, store,
+            refresh_index_anyway=True)
+        rematch = {**counts, "summary": voice_review.rematch_summary(counts)}
+    except Exception as error:
+        rematch = {"error": str(error)}
+
+    return {"schema_version": 1, **result, "rematch": rematch}
+
+
+def voice_recent_meetings_payload() -> dict[str, Any]:
+    import voice_review
+
+    output_dir, _m, archive_dir, _p, _s = _voice_review_context()
+    return {
+        "schema_version": 1,
+        "meetings": voice_review.recent_meetings(output_dir, archive_dir),
+    }
+
+
+def voice_clips_clear_payload() -> dict[str, Any]:
+    import voice_review
+
+    return {"schema_version": 1, "removed": voice_review.clear_clips()}
+
+
+def voice_group_state_payload(
+    group_id: str,
+    action: str,
+) -> dict[str, Any]:
+    import voice_review
+
+    output_dir, _meetings, archive_dir, pending_dir, store = (
+        _voice_review_context()
+    )
+    _runs, groups = voice_review.build_groups(
+        output_dir, archive_dir, pending_dir, store
+    )
+    group = voice_review.find_group(groups, group_id)
+    state = voice_review.load_state()
+    voice_review.set_group_status(group, action, state)
+    voice_review.save_state(state)
+
+    return {
+        "schema_version": 1,
+        "status": voice_review.group_status(group, state),
+    }
 
 
 def startup_retention_payload() -> dict[str, Any]:
@@ -2793,6 +3013,75 @@ def build_parser() -> argparse.ArgumentParser:
     )
     save_voice_settings_parser.add_argument("enabled")
     save_voice_settings_parser.add_argument("update_participants")
+    save_voice_settings_parser.add_argument(
+        "pending_days",
+        nargs="?",
+        default=None,
+    )
+
+    subparsers.add_parser(
+        "voice-groups",
+        help="Return recurring unnamed voices as JSON",
+    )
+
+    voice_clips_parser = subparsers.add_parser(
+        "voice-group-clips",
+        help="Save short audio clips of a recurring unnamed voice",
+    )
+    voice_clips_parser.add_argument("group_id")
+    voice_clips_parser.add_argument("count", type=int, nargs="?", default=3)
+
+    voice_name_parser = subparsers.add_parser(
+        "voice-name-group",
+        help="Name every voice in a recurring unnamed group",
+    )
+    voice_name_parser.add_argument("group_id")
+    voice_name_parser.add_argument("name")
+
+    voice_meeting_parser = subparsers.add_parser(
+        "voice-meeting",
+        help="List the voices in one meeting as JSON",
+    )
+    voice_meeting_parser.add_argument("run")
+
+    voice_meeting_clips_parser = subparsers.add_parser(
+        "voice-meeting-clips",
+        help="Save short clips of one voice in one meeting",
+    )
+    voice_meeting_clips_parser.add_argument("run")
+    voice_meeting_clips_parser.add_argument("voice_id")
+    voice_meeting_clips_parser.add_argument(
+        "count", type=int, nargs="?", default=3)
+
+    voice_meeting_name_parser = subparsers.add_parser(
+        "voice-meeting-name",
+        help="Name one voice in one meeting",
+    )
+    voice_meeting_name_parser.add_argument("run")
+    voice_meeting_name_parser.add_argument("voice_id")
+    voice_meeting_name_parser.add_argument("name")
+    voice_meeting_name_parser.add_argument(
+        "also_similar", nargs="?", default="no")
+
+    subparsers.add_parser(
+        "voice-recent-meetings",
+        help="List recent meetings that have voice information",
+    )
+
+    subparsers.add_parser(
+        "voice-clips-clear",
+        help="Delete saved listening clips",
+    )
+
+    voice_state_parser = subparsers.add_parser(
+        "voice-group-state",
+        help="Hide, ignore or restore a recurring unnamed group",
+    )
+    voice_state_parser.add_argument("group_id")
+    voice_state_parser.add_argument(
+        "action",
+        choices=["hide", "ignore", "restore"],
+    )
 
     subparsers.add_parser(
         "refresh-all-sessions",
@@ -3204,6 +3493,45 @@ def main(argv: list[str] | None = None) -> int:
             payload = save_voice_settings_payload(
                 args.enabled,
                 args.update_participants,
+                args.pending_days,
+            )
+
+        elif args.command == "voice-groups":
+            payload = voice_groups_payload()
+
+        elif args.command == "voice-group-clips":
+            payload = voice_group_clips_payload(
+                args.group_id,
+                args.count,
+            )
+
+        elif args.command == "voice-name-group":
+            payload = voice_name_group_payload(
+                args.group_id,
+                args.name,
+            )
+
+        elif args.command == "voice-meeting":
+            payload = voice_meeting_payload(args.run)
+
+        elif args.command == "voice-meeting-clips":
+            payload = voice_meeting_clips_payload(
+                args.run, args.voice_id, args.count)
+
+        elif args.command == "voice-meeting-name":
+            payload = voice_meeting_name_payload(
+                args.run, args.voice_id, args.name, args.also_similar)
+
+        elif args.command == "voice-recent-meetings":
+            payload = voice_recent_meetings_payload()
+
+        elif args.command == "voice-clips-clear":
+            payload = voice_clips_clear_payload()
+
+        elif args.command == "voice-group-state":
+            payload = voice_group_state_payload(
+                args.group_id,
+                args.action,
             )
 
         elif args.command == "refresh-all-sessions":

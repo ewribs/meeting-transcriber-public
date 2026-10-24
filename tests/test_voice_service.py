@@ -349,3 +349,157 @@ class SpeakersFileTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PendingKeepTests(unittest.TestCase):
+    def test_setting_is_read_safely(self):
+        self.assertEqual(vs.pending_days_setting({}), 180)
+        self.assertEqual(vs.pending_days_setting({"voice_pending_days": 365}), 365)
+        self.assertEqual(vs.pending_days_setting({"voice_pending_days": 0}), 0)
+        self.assertEqual(vs.pending_days_setting({"voice_pending_days": "x"}), 180)
+        self.assertEqual(vs.pending_days_setting({"voice_pending_days": -5}), 180)
+
+    def test_the_automatic_step_prunes_old_fingerprints_but_not_when_never(self):
+        import tempfile, time, voice_auto
+        with tempfile.TemporaryDirectory() as tmp:
+            pending = Path(tmp)
+            old = pending / "old.json"
+            new = pending / "new.json"
+            old.write_text("{}")
+            new.write_text("{}")
+            aged = time.time() - 200 * 86400
+            os.utime(old, (aged, aged))
+            voice_auto._prune_saved_fingerprints({"voice_pending_days": 0}, pending)
+            self.assertTrue(old.exists())
+            voice_auto._prune_saved_fingerprints({"voice_pending_days": 180}, pending)
+            self.assertFalse(old.exists())
+            self.assertTrue(new.exists())
+
+
+class RematchTests(unittest.TestCase):
+    """Re-check a finished meeting against new fingerprints, without audio."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.run = root / "output" / "2026-01-01_0900_Sync"
+        self.archive = root / "archive"
+        self.twin = self.archive / self.run.name
+        self.pending = root / "pending"
+        self.run.mkdir(parents=True)
+        self.twin.mkdir(parents=True)
+        (self.twin / "meeting_metadata.json").write_text("{}", encoding="utf-8")
+
+        # A meeting analyzed when only Person A was known.
+        self.store = vp.VoiceStore()
+        a = self.store.add_person("Person A")
+        self.store.enroll(a.person_id, prints(PERSON_A, seed=1))
+        self.payload = payload(
+            voice_json("V0", PERSON_A, 300),
+            voice_json("V1", PERSON_B, 200, seed=3),
+        )
+        document = vs.build_speakers_document(self.payload, self.store)
+        vs.write_speakers(self.run, document)
+        vs.save_pending(self.run.name, self.payload, self.pending)
+
+    def status(self, voice_id):
+        voices = vs.read_speakers(self.run)["voices"]
+        return next(v for v in voices if v["id"] == voice_id)
+
+    def test_a_voice_stays_unnamed_until_the_person_is_known(self):
+        self.assertEqual(self.status("V1")["status"], "unknown")
+        outcome, _ = vs.rematch_run(self.run, self.store, self.pending)
+        self.assertEqual(outcome, "same")
+
+    def test_a_newly_known_person_is_named_and_published(self):
+        b = self.store.add_person("Person B")
+        self.store.enroll(b.person_id, prints(PERSON_B, seed=9))
+        outcome, document = vs.rematch_run(
+            self.run, self.store, self.pending, self.archive)
+        self.assertEqual(outcome, "updated")
+        self.assertEqual(self.status("V1")["person"], "Person B")
+        self.assertEqual(self.status("V0")["person"], "Person A")
+        twin = vs.read_speakers(self.twin)
+        self.assertEqual(
+            {v["id"]: v["person"] for v in twin["voices"]},
+            {"V0": "Person A", "V1": "Person B"})
+        self.assertEqual(vs.rematch_run(self.run, self.store, self.pending)[0], "same")
+
+    def test_names_confirmed_by_hand_survive(self):
+        b = self.store.add_person("Person B")
+        self.store.enroll(b.person_id, prints(PERSON_B, seed=9))
+        document = vs.read_speakers(self.run)
+        for voice in document["voices"]:
+            if voice["id"] == "V1":
+                voice.update(status="named", via="user",
+                             person_id=self.store.people()[0].person_id,
+                             person="Person A")
+        vs.write_speakers(self.run, document)
+        vs.rematch_run(self.run, self.store, self.pending)
+        self.assertEqual(self.status("V1")["person"], "Person A")
+
+    def test_without_saved_fingerprints_nothing_changes(self):
+        vs.delete_pending(self.run.name, self.pending)
+        before = (self.run / vs.SPEAKERS_FILE).read_text()
+        outcome, document = vs.rematch_run(self.run, self.store, self.pending)
+        self.assertEqual((outcome, document), ("no data", None))
+        self.assertEqual((self.run / vs.SPEAKERS_FILE).read_text(), before)
+
+    def test_a_meeting_without_speakers_or_with_silent_remote(self):
+        empty = self.run.parent / "2026-01-02_0900_Empty"
+        empty.mkdir()
+        self.assertEqual(vs.rematch_run(empty, self.store, self.pending)[0], "no data")
+        silent = vs.read_speakers(self.run)
+        silent["remote_silent"] = True
+        vs.write_speakers(self.run, silent)
+        self.assertEqual(vs.rematch_run(self.run, self.store, self.pending)[0], "silent")
+
+    def test_rematch_all_counts_and_survives_a_bad_meeting(self):
+        import voice_auto
+        b = self.store.add_person("Person B")
+        self.store.enroll(b.person_id, prints(PERSON_B, seed=9))
+        broken = self.run.parent / "2026-01-03_0900_Broken"
+        broken.mkdir()
+        (broken / vs.SPEAKERS_FILE).write_text("{oops", encoding="utf-8")
+        seen = []
+        counts = voice_auto.rematch_all(
+            [self.run, broken], self.store, pending_dir=self.pending,
+            archive_dir=self.archive, update_participants=False,
+            progress=lambda name, outcome: seen.append(outcome))
+        self.assertEqual(counts["updated"], 1)
+        self.assertEqual(counts["failed"], 1)
+        self.assertEqual(len(seen), 2)
+
+
+class MirrorSpeakersTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.run = root / "output" / "2026-01-01_0900_Sync"
+        self.archive = root / "archive"
+        self.twin = self.archive / self.run.name
+        self.run.mkdir(parents=True)
+        self.twin.mkdir(parents=True)
+        (self.twin / "meeting_metadata.json").write_text("{}", encoding="utf-8")
+        vs.write_speakers(self.run, {"version": vs.SPEAKERS_VERSION, "voices": []})
+
+    def test_copies_to_the_published_meeting(self):
+        self.assertTrue(vs.mirror_speakers(self.run, self.archive))
+        self.assertEqual(vs.read_speakers(self.twin)["voices"], [])
+
+    def test_not_published_means_nothing_is_written(self):
+        (self.twin / "meeting_metadata.json").unlink()
+        self.assertFalse(vs.mirror_speakers(self.run, self.archive))
+        self.assertFalse((self.twin / "speakers.json").exists())
+
+    def test_no_archive_or_same_folder_is_a_no_op(self):
+        self.assertFalse(vs.mirror_speakers(self.run, None))
+        self.assertFalse(vs.mirror_speakers(self.twin, self.archive))
+
+    def test_missing_speakers_file_is_a_no_op(self):
+        (self.run / "speakers.json").unlink()
+        self.assertFalse(vs.mirror_speakers(self.run, self.archive))

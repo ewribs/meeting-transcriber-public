@@ -261,6 +261,206 @@ nonisolated struct BackendService: Sendable {
         }
     }
 
+    func loadVoiceGroups() async throws -> VoiceGroupsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-groups"
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceGroupsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    /// Deletes any leftover listening clips. Best effort: a failure here is
+    /// not worth showing.
+    func clearVoiceClips() async {
+        _ = try? await runBridge(
+            arguments: [
+                "voice-clips-clear"
+            ]
+        )
+    }
+
+    func loadMeetingVoices(
+        run: String
+    ) async throws -> MeetingVoicesResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-meeting",
+                run,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                MeetingVoicesResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func makeMeetingVoiceClips(
+        run: String,
+        voiceID: String
+    ) async throws -> VoiceClipsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-meeting-clips",
+                run,
+                voiceID,
+                "3",
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceClipsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func nameMeetingVoice(
+        run: String,
+        voiceID: String,
+        name: String
+    ) async throws -> MeetingVoiceNameResult {
+        let data = try await runBridge(
+            arguments: [
+                "voice-meeting-name",
+                run,
+                voiceID,
+                name,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                MeetingVoiceNameResult.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func loadRecentVoiceMeetings() async throws -> [RecentVoiceMeeting] {
+        let data = try await runBridge(
+            arguments: [
+                "voice-recent-meetings"
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                RecentVoiceMeetingsResponse.self,
+                from: data
+            ).meetings
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func setVoiceGroupState(
+        groupID: String,
+        action: String
+    ) async throws -> VoiceGroupStateResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-group-state",
+                groupID,
+                action,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceGroupStateResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func makeVoiceClips(
+        groupID: String
+    ) async throws -> VoiceClipsResponse {
+        let data = try await runBridge(
+            arguments: [
+                "voice-group-clips",
+                groupID,
+                "3",
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceClipsResponse.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
+    func nameVoiceGroup(
+        groupID: String,
+        name: String
+    ) async throws -> VoiceNameResult {
+        let data = try await runBridge(
+            arguments: [
+                "voice-name-group",
+                groupID,
+                name,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                VoiceNameResult.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
     func loadVoiceSettings() async throws -> VoiceSettingsResponse {
         let data = try await runBridge(
             arguments: [
@@ -283,13 +483,15 @@ nonisolated struct BackendService: Sendable {
 
     func saveVoiceSettings(
         enabled: Bool,
-        updateParticipants: Bool
+        updateParticipants: Bool,
+        pendingDays: Int
     ) async throws -> VoiceSettingsResponse {
         let data = try await runBridge(
             arguments: [
                 "save-voice-settings",
                 enabled ? "on" : "off",
                 updateParticipants ? "on" : "off",
+                String(pendingDays),
             ]
         )
 

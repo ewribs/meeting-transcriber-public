@@ -35,7 +35,17 @@ SPEAKERS_FILE = "speakers.json"
 SPEAKERS_VERSION = 1
 WORKER_RESULT_VERSION = 1
 MIN_ONE_ON_ONE_SHARE = 0.85
-PENDING_MAX_AGE_DAYS = 30
+PENDING_MAX_AGE_DAYS = 180
+
+
+def pending_days_setting(settings: dict) -> int:
+    """How many days saved fingerprints of unnamed voices are kept.
+    0 means never delete. Anything unreadable falls back to the default."""
+    try:
+        days = int(settings.get("voice_pending_days", PENDING_MAX_AGE_DAYS))
+    except (TypeError, ValueError):
+        return PENDING_MAX_AGE_DAYS
+    return days if days >= 0 else PENDING_MAX_AGE_DAYS
 
 
 class VoiceServiceError(Exception):
@@ -77,6 +87,34 @@ def write_speakers(run_dir: Path, document: dict) -> Path:
     path = Path(run_dir) / SPEAKERS_FILE
     _write_private_json(path, document)
     return path
+
+
+def mirror_speakers(run_dir: Path, archive_dir: Path | None) -> bool:
+    """Copy a meeting's speakers.json to its published copy.
+
+    The app reads published meetings from the archive, so a change made to
+    the working copy (naming a voice, re-analyzing) must reach it too.
+    Does nothing if the meeting is not published or the two are the same
+    folder. Returns True if a copy was written. Never raises.
+    """
+    if archive_dir is None:
+        return False
+    try:
+        run_dir = Path(run_dir)
+        twin = Path(archive_dir) / run_dir.name
+        if (
+            not twin.is_dir()
+            or not (twin / "meeting_metadata.json").exists()
+            or twin.resolve() == run_dir.resolve()
+        ):
+            return False
+        document = read_speakers(run_dir)
+        if document is None:
+            return False
+        write_speakers(twin, document)
+        return True
+    except (OSError, ValueError, VoiceServiceError):
+        return False
 
 
 # ------------------------------------------------------------------ worker --
@@ -270,6 +308,59 @@ def prune_pending(
     return removed
 
 
+# ----------------------------------------------------------------- rematch --
+
+def _voice_summary(document: dict) -> list[tuple]:
+    return sorted(
+        (v["id"], v["status"], v.get("person_id"), v.get("via"))
+        for v in document.get("voices", [])
+    )
+
+
+def rematch_run(
+    run_dir: Path,
+    store: vp.VoiceStore,
+    pending_dir: Path = PENDING_DIR,
+    archive_dir: Path | None = None,
+) -> tuple[str, dict | None]:
+    """Re-check one meeting's voices against the current fingerprints, using
+    the fingerprints saved when it was analyzed. No audio, no voice tools.
+
+    Returns (outcome, document). Outcomes: "updated", "same", "no data" (the
+    meeting has no speakers file or its saved fingerprints are gone, so only a
+    full re-analysis can help) and "silent" (remote audio was not captured).
+    """
+    old = read_speakers(run_dir)
+    if not old:
+        return "no data", None
+    if old.get("remote_silent"):
+        return "silent", old
+    saved = load_pending(Path(run_dir).name, pending_dir)
+    voices = old.get("voices", [])
+    if not voices or any(v["id"] not in saved for v in voices):
+        return "no data", None
+
+    rebuilt = {
+        "remote_silent": False,
+        "duration_seconds": old.get("duration_seconds"),
+        "models": old.get("models", {}),
+        "voices": [
+            {"voice_id": v["id"], "seconds": v["seconds"],
+             "turns": v["turns"], "fingerprints": saved[v["id"]]}
+            for v in voices
+        ],
+    }
+    new = keep_confirmations(
+        old,
+        build_speakers_document(rebuilt, store, old.get("expected_names", [])),
+    )
+    if _voice_summary(new) == _voice_summary(old):
+        return "same", old
+    write_speakers(run_dir, new)
+    mirror_speakers(run_dir, archive_dir)
+    return "updated", new
+
+
 # ---------------------------------------------------------------- learning --
 
 def dominant_voice(payload: dict) -> tuple[dict, float] | None:
@@ -307,8 +398,13 @@ def confirm_voice(
     name: str,
     store: vp.VoiceStore,
     pending_dir: Path = PENDING_DIR,
+    only_this: bool = False,
 ) -> dict:
-    """The user says who a voice is. Names it, and learns from it if possible."""
+    """The user says who a voice is. Names it, and learns from it if possible.
+
+    Normally this also names the voices that sound like it in the same meeting
+    (they are the same person split in two). ``only_this`` names just the one
+    chosen."""
     run_dir = Path(run_dir)
     document = read_speakers(run_dir)
     if document is None:
@@ -318,10 +414,10 @@ def confirm_voice(
         raise VoiceServiceError("Unknown voice: " + voice_id)
 
     person = store.ensure_person(name)
-    targets = [voice_id] + [
+    targets = [voice_id] + ([] if only_this else [
         other for other in by_id[voice_id]["same_as"]
         if by_id[other]["status"] != "named"
-    ]
+    ])
     pending = load_pending(run_dir.name, pending_dir)
     prints = []
     for target in targets:

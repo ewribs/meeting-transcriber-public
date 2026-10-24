@@ -41,6 +41,9 @@ struct ContentView: View {
                 case .search:
                     SearchView()
 
+                case .speakers:
+                    SpeakersView()
+
                 case nil:
                     ContentUnavailableView(
                         "Select a workspace",

@@ -82,6 +82,7 @@ Voice recognition replaces the generic `Remote` speaker with real names. It is o
 | `voice_sources.py` | Finds one-on-one recordings to learn from, locates source audio, and makes short audio clips for listening before naming. |
 | `voice_groups.py` | Groups unnamed voices that keep coming back across meetings so one answer names many. |
 | `voice_participants.py` | Builds the participant list from the voices heard (plus names in the title, marked low confidence) and applies or restores it. |
+| `voice_review.py` | Shared review logic for the app and command line: recurring unnamed groups with stable ids, clips, naming a group or one voice, hide/ignore state (per voice, no fingerprints), and the fast re-match of all meetings. |
 | `voice_auto.py` | The optional step after a transcription, and the run log. Catches every failure. |
 | `voice_cli.py` | Command-line workflow for all of the above. |
 
@@ -94,7 +95,9 @@ Design rules:
 - Names the user confirms by hand are kept when a meeting is re-analyzed.
 - Failures are logged to `voices/auto.log` and never change the transcript.
 
-`backend_bridge.py` exposes `voice-settings` and `save-voice-settings` for the Preferences → Voices tab. Python remains the source of truth.
+`backend_bridge.py` exposes `voice-settings` and `save-voice-settings` for the Preferences → Voices tab, and `voice-groups`, `voice-group-clips`, `voice-name-group`, `voice-group-state`, `voice-meeting`, `voice-meeting-clips`, `voice-meeting-name`, `voice-recent-meetings` and `voice-clips-clear` for the Speakers workspace and the per-meeting voices sheet. Python remains the source of truth.
+
+After a voice is named, every meeting is re-matched against the new fingerprints using the fingerprints saved when each meeting was analyzed (`voices/pending/`, kept for a configurable time, six months by default); no audio or voice environment is needed. Participant lists shown in the app come from the published meeting index, so it is rebuilt when participants change. Hide and ignore choices are kept in `voices/review_state.json` as meeting and voice ids only. Listening clips (`voices/clips/`) are deleted when the Speakers screen is left, when the app quits and at the next visit.
 
 ## Local AI execution
 

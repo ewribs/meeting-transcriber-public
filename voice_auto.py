@@ -83,6 +83,7 @@ def _run_voice_step(
             vs.build_speakers_document(payload, store),
         )
         vs.write_speakers(run_dir, document)
+        vs.mirror_speakers(run_dir, archive_dir)
         if not payload.get("remote_silent"):
             vs.save_pending(Path(run_dir).name, payload, pending_dir)
         if payload.get("remote_silent"):
@@ -130,4 +131,52 @@ def run_voice_step(
     status = _run_voice_step(run_dir, audio_path, settings, **kwargs)
     if status != "off":
         log_status(Path(run_dir).name, status, log_path)
+        _prune_saved_fingerprints(
+            settings, kwargs.get("pending_dir", vs.PENDING_DIR))
     return status
+
+
+def _prune_saved_fingerprints(settings: dict, pending_dir: Path) -> None:
+    """Delete saved fingerprints of unnamed voices past the keep limit.
+    Never raises."""
+    try:
+        days = vs.pending_days_setting(settings)
+        if days > 0:
+            vs.prune_pending(pending_dir, days)
+    except Exception:
+        pass
+
+
+def rematch_all(
+    runs,
+    store: vp.VoiceStore,
+    *,
+    pending_dir: Path = vs.PENDING_DIR,
+    archive_dir: Path | None = None,
+    update_participants: bool = True,
+    progress: Callable[[str, str], None] | None = None,
+) -> dict:
+    """Re-match every meeting against the current fingerprints, quickly.
+
+    Counts: updated, same, no_data (needs a full re-analysis), failed.
+    Never raises for one bad meeting.
+    """
+    counts = {"updated": 0, "same": 0, "no_data": 0, "failed": 0}
+    for run_dir in runs:
+        try:
+            outcome, document = vs.rematch_run(
+                run_dir, store, pending_dir, archive_dir)
+            if outcome == "updated":
+                counts["updated"] += 1
+                if update_participants and document is not None:
+                    _update_participants(run_dir, document, store, archive_dir)
+            elif outcome == "same":
+                counts["same"] += 1
+            elif outcome == "no data":
+                counts["no_data"] += 1
+        except Exception as error:
+            counts["failed"] += 1
+            outcome = f"failed ({error})"
+        if progress:
+            progress(Path(run_dir).name, outcome)
+    return counts

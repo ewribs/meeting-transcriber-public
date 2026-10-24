@@ -122,6 +122,7 @@ struct MeetingsView: View {
     @State var dynamicEditorTarget: DynamicEditorTarget?
     @State var sessionRefreshedRuns: Set<String> = []
     @State var renameMeetingTarget: Meeting?
+    @State var voicesSheetTarget: VoiceSheetTarget?
     @State var renameMeetingText = ""
     @State var renameMeetingError: String?
     @State var isRenamingMeeting = false
@@ -714,6 +715,13 @@ struct MeetingsView: View {
             )
         ) {
             renameMeetingSheet
+        }
+        .sheet(item: $voicesSheetTarget) { target in
+            MeetingVoicesSheet(target: target) {
+                Task {
+                    await reloadSelectedMeetingDetail()
+                }
+            }
         }
         .sheet(item: $folderSheet) { mode in
             VStack(

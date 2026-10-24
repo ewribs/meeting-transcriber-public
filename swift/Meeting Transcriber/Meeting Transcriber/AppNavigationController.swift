@@ -6,6 +6,7 @@ final class AppNavigationController: ObservableObject {
     enum Workspace: String, CaseIterable, Identifiable {
         case transcribe = "Transcribe"
         case meetings = "Meetings"
+        case speakers = "Speakers"
         case search = "Search"
 
         var id: Self { self }
@@ -18,6 +19,8 @@ final class AppNavigationController: ObservableObject {
                 return "list.bullet.rectangle"
             case .search:
                 return "magnifyingglass"
+            case .speakers:
+                return "person.wave.2"
             }
         }
     }

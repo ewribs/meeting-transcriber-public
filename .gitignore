@@ -28,6 +28,7 @@ known_people.local.json
 identity.local.json
 business_context.local.json
 release_audit.local.json
+release_audit.local.json.bak
 
 # Backfill backups and progress
 backfill_backups/

@@ -180,3 +180,56 @@ class MeetingDetailServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MeetingSpeakersTests(unittest.TestCase):
+    def detail_for(self, document):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run = Path(temp_dir)
+            if document is not None:
+                (run / "speakers.json").write_text(
+                    json.dumps(document), encoding="utf-8")
+            return load_meeting_detail({"location": str(run)})
+
+    def test_no_voice_data_means_no_speakers(self):
+        self.assertIsNone(self.detail_for(None)["speakers"])
+
+    def test_named_voices_are_added_up_and_sorted(self):
+        speakers = self.detail_for({
+            "remote_silent": False,
+            "thresholds": {"min_seconds": 30},
+            "voices": [
+                {"id": "00", "seconds": 120, "status": "named", "person": "Sam"},
+                {"id": "01", "seconds": 600, "status": "named", "person": "Jordan"},
+                {"id": "02", "seconds": 60, "status": "named", "person": "Sam"},
+            ],
+        })["speakers"]
+        self.assertEqual(
+            speakers["people"],
+            [{"name": "Jordan", "minutes": 10.0}, {"name": "Sam", "minutes": 3.0}],
+        )
+        self.assertEqual(speakers["unnamed_count"], 0)
+
+    def test_short_unnamed_voices_are_not_counted(self):
+        speakers = self.detail_for({
+            "remote_silent": False,
+            "thresholds": {"min_seconds": 30},
+            "voices": [
+                {"id": "00", "seconds": 90, "status": "unknown", "person": None},
+                {"id": "01", "seconds": 10, "status": "unknown", "person": None},
+            ],
+        })["speakers"]
+        self.assertEqual(speakers["unnamed_count"], 1)
+        self.assertEqual(speakers["unnamed_minutes"], 1.5)
+
+    def test_silent_remote_is_reported(self):
+        speakers = self.detail_for(
+            {"remote_silent": True, "voices": []})["speakers"]
+        self.assertTrue(speakers["remote_silent"])
+        self.assertEqual(speakers["people"], [])
+
+    def test_unreadable_file_is_ignored(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run = Path(temp_dir)
+            (run / "speakers.json").write_text("not json", encoding="utf-8")
+            self.assertIsNone(load_meeting_detail({"location": str(run)})["speakers"])

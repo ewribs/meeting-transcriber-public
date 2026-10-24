@@ -25,10 +25,12 @@ nonisolated struct VoiceStatus: Decodable, Sendable, Equatable {
 nonisolated struct VoiceSettings: Decodable, Sendable {
     let enabled: Bool
     let updateParticipants: Bool
+    let pendingDays: Int
 
     enum CodingKeys: String, CodingKey {
         case enabled
         case updateParticipants = "update_participants"
+        case pendingDays = "pending_days"
     }
 }
 
@@ -42,6 +44,7 @@ nonisolated struct VoiceSettingsResponse: Decodable, Sendable {
 struct VoicesPreferencesTab: View {
     @State private var enabled = false
     @State private var updateParticipants = true
+    @State private var pendingDays = 180
     @State private var status = VoiceStatus.empty
     @State private var isLoaded = false
     @State private var isBusy = false
@@ -84,6 +87,25 @@ struct VoicesPreferencesTab: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
+            }
+
+            Section("Unnamed Voices") {
+                Picker(
+                    "Remember unnamed voices for",
+                    selection: pendingDaysBinding
+                ) {
+                    Text("1 month").tag(30)
+                    Text("3 months").tag(90)
+                    Text("6 months").tag(180)
+                    Text("1 year").tag(365)
+                    Text("Never delete").tag(0)
+                }
+                .disabled(!isLoaded || isBusy)
+
+                Text("Voices that have no name yet are remembered for this long, so the Speakers screen can match them across meetings. After that their fingerprint is deleted. Named people are not affected and are kept until you delete them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("Status") {
@@ -131,7 +153,8 @@ struct VoicesPreferencesTab: View {
                 Task {
                     await save(
                         enabled: newValue,
-                        updateParticipants: updateParticipants
+                        updateParticipants: updateParticipants,
+                        pendingDays: pendingDays
                     )
                 }
             }
@@ -145,7 +168,23 @@ struct VoicesPreferencesTab: View {
                 Task {
                     await save(
                         enabled: enabled,
-                        updateParticipants: newValue
+                        updateParticipants: newValue,
+                        pendingDays: pendingDays
+                    )
+                }
+            }
+        )
+    }
+
+    private var pendingDaysBinding: Binding<Int> {
+        Binding(
+            get: { pendingDays },
+            set: { newValue in
+                Task {
+                    await save(
+                        enabled: enabled,
+                        updateParticipants: updateParticipants,
+                        pendingDays: newValue
                     )
                 }
             }
@@ -167,7 +206,8 @@ struct VoicesPreferencesTab: View {
     @MainActor
     private func save(
         enabled newEnabled: Bool,
-        updateParticipants newUpdate: Bool
+        updateParticipants newUpdate: Bool,
+        pendingDays newDays: Int
     ) async {
         guard !isBusy else {
             return
@@ -184,7 +224,8 @@ struct VoicesPreferencesTab: View {
             apply(
                 try await backend.saveVoiceSettings(
                     enabled: newEnabled,
-                    updateParticipants: newUpdate
+                    updateParticipants: newUpdate,
+                    pendingDays: newDays
                 )
             )
         } catch {
@@ -217,6 +258,7 @@ struct VoicesPreferencesTab: View {
     private func apply(_ response: VoiceSettingsResponse) {
         enabled = response.settings.enabled
         updateParticipants = response.settings.updateParticipants
+        pendingDays = response.settings.pendingDays
         status = response.status
     }
 }

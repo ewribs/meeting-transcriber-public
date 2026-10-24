@@ -405,8 +405,34 @@ class ParticipantsNewTests(CliTestCase):
         code, out = self.run_cli("participants-new", "--apply")
         self.assertEqual(self.names(self.output / self.name), ["Mentioned"])
 
+    def speaker_names(self, folder):
+        import json
+        data = json.loads((folder / "speakers.json").read_text(encoding="utf-8"))
+        return [v["person"] for v in data["voices"]]
 
-class UnknownsTests(CliTestCase):
+    def test_identify_all_also_updates_the_published_copy(self):
+        self.run_cli("identify-all")
+        self.assertEqual(self.speaker_names(self.twin), ["Alex"])
+
+    def test_confirm_also_updates_the_published_copy(self):
+        self.run_cli("identify-all")
+        code, out = self.run_cli("confirm", self.name, "Sam", "--voice", "00")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.speaker_names(self.output / self.name), ["Sam"])
+        self.assertEqual(self.speaker_names(self.twin), ["Sam"])
+
+    def test_identify_leaves_unpublished_meetings_without_a_copy(self):
+        import shutil
+        shutil.rmtree(self.twin)
+        code, out = self.run_cli("identify", self.name)
+        self.assertEqual(code, 0)
+        self.assertFalse(self.twin.exists())
+
+
+class UnknownsFixture(CliTestCase):
+    """Three meetings share one unnamed voice; three others do not."""
+
+
     def setUp(self):
         super().setUp()
         self.by_folder = {}
@@ -433,6 +459,8 @@ class UnknownsTests(CliTestCase):
         self.by_folder[name] = payload(*voices)
         return folder
 
+
+class UnknownsTests(UnknownsFixture):
     def test_lists_the_recurring_voice_with_title_hints(self):
         code, out = self.run_cli("unknowns")
         self.assertEqual(code, 0)
@@ -458,7 +486,7 @@ class UnknownsTests(CliTestCase):
         code, out = self.run_cli("unknowns", "--name", "1", "Jordan")
         self.assertEqual(code, 0)
         self.assertIn("Named 3 voices in 3 meetings as Jordan", out)
-        self.assertIn("identify-all --redo", out)
+        self.assertIn("Updated", out)
         self.assertEqual(self.store().find("Jordan").enrollments, 3)
         document = vs.read_speakers(self.output / "2026-10-02_0900_PlanJordan100226")
         self.assertEqual(document["voices"][1]["person"], "Jordan")
@@ -487,6 +515,291 @@ class UnknownsTests(CliTestCase):
             )
         self.assertEqual(code, 0)
         self.assertIn("identify-all", out.getvalue())
+
+
+class ReviewTests(UnknownsFixture):
+    """The shared review logic that the app uses."""
+
+    def groups(self):
+        import voice_review
+        runs, groups = voice_review.build_groups(
+            self.output, self.archive, self.voices / "pending", self.store())
+        return voice_review, runs, groups
+
+    def test_group_has_a_stable_id_and_readable_facts(self):
+        review, runs, groups = self.groups()
+        self.assertEqual(len(groups), 1)
+        info = review.describe_group(groups[0])
+        self.assertEqual(info["meetings"], 3)
+        self.assertEqual(info["hints"], ["Jordan"])
+        self.assertEqual(len(info["id"]), 12)
+        self.assertEqual(info["first"], "2026-10-01")
+        self.assertEqual(info["last"], "2026-10-03")
+        self.assertEqual(info["recent"][0], "JordanAndAlex1003" + "26")
+        _, _, again = self.groups()
+        self.assertEqual(review.group_id(again[0]), info["id"])
+
+    def test_unknown_group_id_is_refused(self):
+        review, runs, groups = self.groups()
+        with self.assertRaises(review.ReviewError):
+            review.find_group(groups, "nope")
+
+    def test_clips_come_from_different_meetings_and_old_ones_are_removed(self):
+        review, runs, groups = self.groups()
+        clips_dir = self.root / "clips"
+        clips_dir.mkdir()
+        (clips_dir / "stale.wav").write_bytes(b"x")
+        made = []
+
+        def clipper(audio, start, length, out):
+            made.append(out)
+            Path(out).write_bytes(b"wav")
+
+        clips = review.make_group_clips(
+            groups[0], runs, self.meetings, self.archive, clips_dir,
+            count=2, clipper=clipper)
+        self.assertEqual(len(clips), 2)
+        self.assertEqual(len({c["meeting"] for c in clips}), 2)
+        self.assertFalse((clips_dir / "stale.wav").exists())
+        self.assertTrue(all(Path(c["path"]).exists() for c in clips))
+
+    def test_naming_a_group_names_all_and_mirrors(self):
+        review, runs, groups = self.groups()
+        store = self.store()
+        result = review.name_group(
+            groups[0], runs, "  Jordan  ", store, self.voices / "pending", self.archive)
+        store.save(self.voices / "profiles.json")
+        self.assertEqual(result["named"], 3)
+        self.assertEqual(result["meetings"], 3)
+        self.assertIsNotNone(self.store().find("Jordan"))
+
+    def test_bad_names_are_refused(self):
+        review, runs, groups = self.groups()
+        for bad in ("", "   ", "x" * 61):
+            with self.assertRaises(review.ReviewError):
+                review.name_group(groups[0], runs, bad, self.store(),
+                                  self.voices / "pending", self.archive)
+        self.assertIsNone(self.store().find("Jordan"))
+
+
+class ReviewBridgeTests(UnknownsFixture):
+    """The three commands the app calls."""
+
+    def setUp(self):
+        super().setUp()
+        import voice_service
+        import backend_bridge
+        self.bridge = backend_bridge
+        store = self.store()
+        self.context = (self.output, self.meetings, self.archive,
+                        self.voices / "pending", store)
+        patches = [
+            mock.patch.object(backend_bridge, "_voice_review_context",
+                              side_effect=lambda: self.context[:4] + (self.store(),)),
+            mock.patch.object(voice_service, "STORE_PATH", self.voices / "profiles.json"),
+            mock.patch("voice_review.CLIPS_DIR", self.root / "clips"),
+            mock.patch("voice_review.STATE_PATH", self.root / "review_state.json"),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_groups_payload_lists_the_group_and_known_people(self):
+        payload = self.bridge.voice_groups_payload()
+        self.assertEqual(len(payload["groups"]), 1)
+        self.assertEqual(payload["groups"][0]["hints"], ["Jordan"])
+        self.assertEqual(payload["people"], ["Alex"])
+
+    def test_naming_through_the_app_command(self):
+        key = self.bridge.voice_groups_payload()["groups"][0]["id"]
+        result = self.bridge.voice_name_group_payload(key, "Jordan")
+        self.assertEqual(result["named"], 3)
+        self.assertEqual(result["meetings"], 3)
+        self.assertEqual(self.store().find("Jordan").enrollments, 3)
+        self.assertEqual(self.bridge.voice_groups_payload()["groups"], [])
+
+    def test_a_stale_group_id_is_refused_and_nothing_changes(self):
+        with self.assertRaises(ValueError):
+            self.bridge.voice_name_group_payload("stale", "Jordan")
+        self.assertIsNone(self.store().find("Jordan"))
+
+    def test_clips_command_passes_the_group_and_limits_the_count(self):
+        import voice_review
+        key = self.bridge.voice_groups_payload()["groups"][0]["id"]
+        fake = [{"path": "/x/1.wav", "meeting": "A", "seconds": 10}]
+        with mock.patch.object(voice_review, "make_group_clips",
+                               return_value=fake) as made:
+            payload = self.bridge.voice_group_clips_payload(key, 99)
+        self.assertEqual(payload["clips"], fake)
+        self.assertEqual(made.call_args.kwargs["count"], 6)
+        self.assertEqual(len(made.call_args.args[0].members), 3)
+
+    def first_group(self):
+        return self.bridge.voice_groups_payload()["groups"][0]
+
+    def test_groups_start_active(self):
+        self.assertEqual(self.first_group()["status"], "active")
+
+    def test_hide_ignore_and_restore(self):
+        key = self.first_group()["id"]
+        for action, expected in (("hide", "hidden"), ("ignore", "ignored"),
+                                 ("restore", "active")):
+            result = self.bridge.voice_group_state_payload(key, action)
+            self.assertEqual(result["status"], expected)
+            self.assertEqual(self.first_group()["status"], expected)
+            self.assertEqual(self.first_group()["id"], key)
+
+    def test_state_file_holds_no_fingerprints_and_is_private(self):
+        import json, os, stat
+        key = self.first_group()["id"]
+        self.bridge.voice_group_state_payload(key, "ignore")
+        path = self.root / "review_state.json"
+        data = json.loads(path.read_text())
+        self.assertEqual(set(data), {"version", "hidden", "ignored"})
+        self.assertEqual(len(data["ignored"]), 3)
+        self.assertTrue(all("|" in k for k in data["ignored"]))
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_a_group_shows_again_when_it_gains_a_voice(self):
+        import voice_review
+        key = self.first_group()["id"]
+        self.bridge.voice_group_state_payload(key, "hide")
+        _runs, groups = voice_review.build_groups(
+            self.output, self.archive, self.voices / "pending", self.store())
+        state = voice_review.load_state()
+        extra = {"x|9"}
+        self.assertEqual(voice_review.group_status(groups[0], state), "hidden")
+        state["hidden"] -= {sorted(voice_review.member_keys(groups[0]))[0]}
+        self.assertEqual(voice_review.group_status(groups[0], state), "active")
+        self.assertTrue(extra.isdisjoint(state["hidden"]))
+
+    def test_unknown_action_and_stale_group_are_refused(self):
+        key = self.first_group()["id"]
+        with self.assertRaises(ValueError):
+            self.bridge.voice_group_state_payload(key, "delete")
+        with self.assertRaises(ValueError):
+            self.bridge.voice_group_state_payload("stale", "hide")
+
+    def test_a_damaged_state_file_is_treated_as_empty(self):
+        (self.root / "review_state.json").write_text("{not json")
+        self.assertEqual(self.first_group()["status"], "active")
+
+    def test_clips_clear_removes_only_wav_files(self):
+        clips = self.root / "clips"
+        clips.mkdir()
+        (clips / "a_1.wav").write_bytes(b"x")
+        (clips / "a_2.wav").write_bytes(b"x")
+        (clips / "keep.txt").write_text("x")
+        self.assertEqual(self.bridge.voice_clips_clear_payload()["removed"], 2)
+        self.assertEqual([p.name for p in clips.iterdir()], ["keep.txt"])
+        self.assertEqual(self.bridge.voice_clips_clear_payload()["removed"], 0)
+
+    def test_naming_reports_the_quick_recheck(self):
+        key = self.first_group()["id"]
+        result = self.bridge.voice_name_group_payload(key, "Jordan")
+        self.assertIn("summary", result["rematch"])
+
+    RUN = "2026-10-01_0900_JordanSync100126"
+
+    def voice_of(self, run, voice_id):
+        import voice_service
+        document = voice_service.read_speakers(self.output / run)
+        return next(v for v in document["voices"] if v["id"] == voice_id)
+
+    def test_meeting_voices_lists_each_voice(self):
+        payload = self.bridge.voice_meeting_payload(self.RUN)
+        by_id = {v["id"]: v for v in payload["voices"]}
+        self.assertEqual(by_id["SPEAKER_00"]["person"], "Alex")
+        self.assertEqual(by_id["SPEAKER_01"]["status"], "unknown")
+        self.assertFalse(by_id["SPEAKER_01"]["short"])
+        self.assertTrue(by_id["SPEAKER_01"]["can_learn"])
+        self.assertEqual(payload["voices"][0]["id"], "SPEAKER_00")
+        self.assertEqual(payload["people"], ["Alex"])
+
+    def test_a_path_is_not_a_meeting(self):
+        for bad in ("../x", "a/b", "", ".."):
+            with self.assertRaises(ValueError):
+                self.bridge.voice_meeting_payload(bad)
+
+    def test_naming_one_voice_names_it_and_rechecks_other_meetings(self):
+        import voice_review
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=False):
+            result = self.bridge.voice_meeting_name_payload(
+                self.RUN, "SPEAKER_01", "Jordan")
+        self.assertEqual(result["named"], 1)
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["person"], "Jordan")
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["via"], "user")
+        self.assertIn("summary", result["rematch"])
+        # The same voice in another meeting is now recognized.
+        other = "2026-10-02_0900_PlanJordan100226"
+        self.assertEqual(self.voice_of(other, "SPEAKER_01")["person"], "Jordan")
+
+    def test_naming_needs_a_name_and_a_real_voice(self):
+        with self.assertRaises(ValueError):
+            self.bridge.voice_meeting_name_payload(self.RUN, "SPEAKER_01", "  ")
+        with self.assertRaises(ValueError):
+            self.bridge.voice_meeting_name_payload(self.RUN, "SPEAKER_77", "Jordan")
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["status"], "unknown")
+
+    def test_meeting_clips_come_from_that_voice_only(self):
+        import voice_review
+        made = []
+
+        def fake_clipper(audio, start, length, out):
+            made.append((start, length))
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_bytes(b"x")
+
+        with mock.patch.object(voice_review.voice_sources, "make_clip",
+                               fake_clipper), \
+             mock.patch.object(voice_review, "make_voice_clips",
+                               wraps=voice_review.make_voice_clips):
+            folder = self.output / self.RUN
+            clips = voice_review.make_voice_clips(
+                folder, "SPEAKER_01", self.meetings, self.archive,
+                self.root / "clips", clipper=fake_clipper)
+        self.assertTrue(clips)
+        self.assertTrue(all(c["meeting"].startswith("at ") for c in clips))
+        self.assertTrue(all(Path(c["path"]).exists() for c in clips))
+        with self.assertRaises(voice_review.ReviewError):
+            voice_review.make_voice_clips(
+                folder, "SPEAKER_77", self.meetings, self.archive,
+                self.root / "clips", clipper=fake_clipper)
+
+    def test_naming_in_the_app_rebuilds_the_published_index(self):
+        import voice_review
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=True), \
+             mock.patch.object(voice_review, "refresh_index",
+                               return_value=True) as refreshed:
+            result = self.bridge.voice_meeting_name_payload(
+                self.RUN, "SPEAKER_01", "Jordan")
+        refreshed.assert_called_once()
+        self.assertTrue(result["rematch"]["index_refreshed"])
+
+    def test_the_index_is_left_alone_when_participants_are_not_managed(self):
+        import voice_review
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=False), \
+             mock.patch.object(voice_review, "refresh_index") as refreshed:
+            self.bridge.voice_meeting_name_payload(
+                self.RUN, "SPEAKER_01", "Jordan")
+        refreshed.assert_not_called()
+
+    def test_refresh_index_never_raises(self):
+        import voice_review
+        self.assertFalse(voice_review.refresh_index(self.root / "nowhere"))
+
+    def test_recent_meetings_lists_newest_first_with_counts(self):
+        meetings = self.bridge.voice_recent_meetings_payload()["meetings"]
+        self.assertEqual(meetings[0]["run"], "2026-10-06_0900_Roadmap100626")
+        sync = next(m for m in meetings if m["run"] == self.RUN)
+        self.assertEqual((sync["voices"], sync["unnamed"]), (2, 1))
+
+    def test_clips_command_refuses_a_stale_group(self):
+        with self.assertRaises(ValueError):
+            self.bridge.voice_group_clips_payload("stale")
 
 
 class SetPythonTests(CliTestCase):

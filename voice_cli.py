@@ -10,6 +10,8 @@
                                              has not been done yet
     python3 voice_cli.py unknowns            list unnamed voices that keep
                                              coming back, and name them
+    python3 voice_cli.py rematch             re-check every meeting against the
+                                             current fingerprints (fast, no audio)
     python3 voice_cli.py show RUN            show what was worked out
     python3 voice_cli.py confirm RUN ...     say who a voice is
 
@@ -33,6 +35,7 @@ import voice_groups
 import voice_participants
 import voice_profiles as vp
 import voice_service as vs
+import voice_review
 import voice_sources
 
 
@@ -64,41 +67,8 @@ def _make_worker(python_path: str, cache_dir: Path) -> Callable[[Path], dict]:
     return worker
 
 
-def _list_runs(output_dir: Path, archive_dir: Path, no_archive: bool) -> list[Path]:
-    """Every meeting folder, newest first. A meeting in both places is listed
-    once, from the output folder."""
-    roots = [output_dir] + ([] if no_archive else [archive_dir])
-    seen: set[str] = set()
-    runs: list[Path] = []
-    for root in roots:
-        if not Path(root).is_dir():
-            continue
-        for folder in Path(root).iterdir():
-            if (folder.is_dir() and folder.name not in seen
-                    and re.match(r"\d{4}-\d{2}-\d{2}_", folder.name)):
-                seen.add(folder.name)
-                runs.append(folder)
-    runs.sort(key=lambda d: d.name, reverse=True)
-    return runs
-
-
-def _collect_occurrences(runs, pending_dir: Path, min_seconds: float):
-    items = []
-    for folder in runs:
-        try:
-            document = vs.read_speakers(folder)
-        except vs.VoiceServiceError:
-            continue
-        if not document:
-            continue
-        pending = vs.load_pending(folder.name, pending_dir)
-        for voice in document.get("voices", []):
-            prints = pending.get(voice["id"]) or []
-            if (voice["status"] == "unknown" and voice["seconds"] >= min_seconds
-                    and len(prints) >= 2):
-                items.append(voice_groups.Occurrence(
-                    folder.name, voice["id"], voice["seconds"], vp.centroid(prints)))
-    return items
+_list_runs = voice_review.list_runs
+_collect_occurrences = voice_review.collect_occurrences
 
 
 def _resolve_run(run: str, output_dir: Path) -> Path | None:
@@ -186,6 +156,9 @@ def main(
     p = sub.add_parser("identify-all")
     p.add_argument("--limit", type=int, help="stop after this many meetings")
     p.add_argument("--redo", action="store_true", help="also redo finished meetings")
+    p.add_argument("--no-archive", action="store_true")
+
+    p = sub.add_parser("rematch", help="re-check all meetings against current fingerprints (fast)")
     p.add_argument("--no-archive", action="store_true")
 
     p = sub.add_parser("participants")
@@ -621,25 +594,20 @@ def main(
                 if reply.strip().lower() not in ("y", "yes"):
                     print("Cancelled.")
                     return 1
-                by_name = {r.name: r for r in runs}
-                named = learned = 0
-                touched: set[str] = set()
-                for member in group.members:
-                    folder = by_name[member.run]
-                    document = vs.read_speakers(folder)
-                    current = {v["id"]: v for v in document["voices"]}
-                    if current[member.voice_id]["status"] == "named":
-                        continue
-                    info = vs.confirm_voice(folder, member.voice_id, person_name,
-                                            store, pending_dir)
-                    named += len(info["voices"])
-                    learned += info["enrolled"]
-                    touched.add(member.run)
+                try:
+                    result = voice_review.name_group(
+                        group, runs, person_name, store, pending_dir, archive_dir)
+                except voice_review.ReviewError as error:
+                    print("Error: " + str(error))
+                    return 2
+                named, learned = result["named"], result["learned"]
                 store.save(store_path)
-                print(f"\nNamed {named} voices in {len(touched)} meetings as "
+                print(f"\nNamed {named} voices in {result['meetings']} meetings as "
                       f"{person_name} and learned {learned} fingerprints.")
-                print("To recognize them in your other meetings too, run: "
-                      "python3 voice_cli.py identify-all --redo")
+                counts = voice_review.rematch_everything(
+                    output_dir, archive_dir, pending_dir, store,
+                    no_archive=args.no_archive)
+                print(voice_review.rematch_summary(counts))
                 return 0
 
             shown = groups[:args.limit]
@@ -651,6 +619,18 @@ def main(
             print("To name one: python3 voice_cli.py unknowns --name 1 NAME")
             print("The numbers can change if new meetings are analyzed in between, "
                   "so check the list just before naming.")
+            return 0
+
+        # ------------------------------------------------------------- rematch
+        if args.command == "rematch":
+            output_dir, _meetings, archive_dir = dirs or _default_dirs()
+            store = _load_store(store_path)
+            counts = voice_review.rematch_everything(
+                output_dir, archive_dir, pending_dir, store,
+                no_archive=args.no_archive,
+                progress=lambda name, outcome: (
+                    print(f"{name}: {outcome}") if outcome == "updated" else None))
+            print(voice_review.rematch_summary(counts))
             return 0
 
         # --------------------------------------------------------- identify-all
@@ -696,6 +676,7 @@ def main(
                         vs.build_speakers_document(payload, store),
                     )
                     vs.write_speakers(folder, document)
+                    vs.mirror_speakers(folder, archive_dir)
                     if not payload.get("remote_silent"):
                         vs.save_pending(folder.name, payload, pending_dir)
                 except (vs.VoiceServiceError, OSError) as error:
@@ -746,6 +727,7 @@ def main(
                 vs.build_speakers_document(payload, store, expected),
             )
             vs.write_speakers(run_dir, document)
+            vs.mirror_speakers(run_dir, archive_dir)
             if not payload.get("remote_silent"):
                 vs.save_pending(run_dir.name, payload, pending_dir)
             print_document(document, run_dir.name)
@@ -803,7 +785,12 @@ def main(
                       + ", ".join(_short(i) for i in ids))
                 return 2
             info = vs.confirm_voice(run_dir, matches[0], name, store, pending_dir)
+            vs.mirror_speakers(run_dir, archive_dir)
             store.save(store_path)
+            if voice_review._participants_setting():
+                voice_auto._update_participants(
+                    run_dir, vs.read_speakers(run_dir), store, archive_dir)
+                voice_review.refresh_index(archive_dir)
             learned = (f" and learned {info['enrolled']} fingerprints"
                        if info["enrolled"] else "")
             print(f"Named voice {_short(matches[0])} as {name}{learned}.")

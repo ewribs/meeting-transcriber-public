@@ -6,6 +6,21 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.1 — 2026-10-24
+
+### Added (Speakers, optional voice recognition)
+- A **Speakers** workspace lists unnamed voices that keep coming back, with short clips to listen to, a name field with a Known people menu, and confirmation before naming. Naming applies to every meeting in the group and teaches the app the person's voice.
+- **Hide for Now** and **Don't Track** keep the list manageable; both are remembered per meeting voice, without saving a fingerprint, and can be undone.
+- **Voices…** in a meeting's header (and **Name Voices in a Meeting** on the Speakers screen) names a single voice in a single meeting, even when it has not appeared in other meetings yet.
+- A **Who Spoke** section in meeting detail shows the people heard and how long each spoke.
+- After naming someone, the app re-checks your other meetings in seconds using fingerprints it already saved (`voice_cli.py rematch`), so no separate re-analysis step is needed.
+- Preferences → Voices can set how long fingerprints of unnamed voices are remembered (six months by default; the previous limit was never applied). Listening clips are deleted when you leave the Speakers screen or quit.
+
+### Fixed
+- The published copy of a meeting's voice information is now kept up to date, and the meeting list's participants refresh after voices are named.
+
+## v2.0 — 2026-10-22
+
 ### Added (voice recognition, optional and off by default)
 - Voice fingerprints, learned locally, that turn the generic "Remote" speaker into real names. Fingerprints stay on your Mac and are never saved in meetings, exports, archives or the repository.
 - A command-line workflow (`voice_cli.py`) to learn people from one-on-one recordings, list recurring unnamed voices, listen to short clips before naming anyone, and name a voice or a whole group of recurring voices at once. Re-analyzing meetings keeps names you confirmed by hand.

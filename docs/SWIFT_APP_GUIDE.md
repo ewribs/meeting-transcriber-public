@@ -4,10 +4,11 @@ A tour of the native Meeting Transcriber app: what each part does and how to
 do common tasks. For installation see [INSTALL.md](INSTALL.md); for the
 design see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-The app has three workspaces, listed in the left-hand sidebar:
+The app has four workspaces, listed in the left-hand sidebar:
 
 - **Transcribe** — record or add audio and watch it process.
 - **Meetings** — browse, organize, ask questions about, and compare meetings.
+- **Speakers** — name the voices that keep coming back (optional voice recognition).
 - **Search** — search across everything.
 
 Preferences (**⌘,**) holds settings, grouped into tabs.
@@ -83,10 +84,18 @@ Preferences → Meetings → Sidebar.
 A control at the top switches between:
 
 - **Meeting** — summary, transcript, topics, decisions, action items, open
-  questions and processing details for the selected meeting.
+  questions, who spoke and processing details for the selected meeting.
 - **Ask** — ask questions across the selected meetings or the selected
   session (see below).
 - **Changes** — appears only when a session is selected (see below).
+
+### Voices in a meeting
+
+With voice recognition on, the **Who Spoke** section lists the people heard and
+how long each spoke. **Voices…** in the meeting header opens a sheet with every
+voice in that meeting: listen to short clips, and name a voice you recognize.
+Only the voice you choose is named, and your other meetings are re-checked
+afterwards. See [Speakers](#speakers) below.
 
 ### Publish, unpublish and delete
 
@@ -172,6 +181,26 @@ Search looks across all indexed meeting and session content.
 
 ---
 
+## Speakers
+
+The Speakers workspace is for voice recognition (optional; see the
+[User Guide](USER_GUIDE.md#voice-recognition-optional)). It lists voices that
+keep coming back across meetings but have no name yet, biggest first.
+
+- **Listen** makes three short clips; click one to play or stop it.
+- Type a name (or choose from **Known people**) and click **Name Group**, then
+  confirm. Every voice in the group is named and the app re-checks your other
+  meetings.
+- **Hide for Now** moves a group to a collapsed *Hidden* section; **Don't Track**
+  moves it to *Not tracked*. **Bring Back** returns it.
+- **Name Voices in a Meeting** picks a recent meeting and opens its voices, for
+  naming someone who has not appeared in enough meetings to form a group.
+- **Refresh** reloads the list.
+
+Listening clips are deleted when you leave the screen or quit the app.
+
+---
+
 ## Preferences (⌘,)
 
 Settings are split into four tabs.
@@ -208,8 +237,11 @@ Settings are split into four tabs.
   and a switch to list the people who spoke as the meeting's participants. The
   first switch cannot be turned on until the voice tools are set up and at
   least one person has a voice fingerprint; the tab says what is missing.
+- *Unnamed Voices:* how long the fingerprints of voices without a name are
+  remembered (1 month, 3 months, 6 months, 1 year, or never delete). Named
+  people are not affected.
 - *Status:* how many people have a fingerprint and the most recent automatic
-  runs. Naming voices is done from the command line for now; see the
+  runs. Name voices in the **Speakers** workspace; see the
   [User Guide](USER_GUIDE.md#voice-recognition-optional).
 
 ---

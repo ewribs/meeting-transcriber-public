@@ -71,6 +71,27 @@ nonisolated struct MeetingCommitment: Decodable, Sendable, Hashable {
 }
 
 
+/// Who spoke, from the optional voice step. Absent when the meeting has no
+/// voice data.
+nonisolated struct MeetingSpeakers: Decodable, Sendable {
+    nonisolated struct Person: Decodable, Sendable {
+        let name: String
+        let minutes: Double
+    }
+
+    let remoteSilent: Bool
+    let people: [Person]
+    let unnamedCount: Int
+    let unnamedMinutes: Double
+
+    enum CodingKeys: String, CodingKey {
+        case remoteSilent = "remote_silent"
+        case people
+        case unnamedCount = "unnamed_count"
+        case unnamedMinutes = "unnamed_minutes"
+    }
+}
+
 nonisolated struct MeetingProcessingMetadata: Decodable, Sendable {
     let aiModel: String
     let profileDisplay: String
@@ -101,6 +122,7 @@ nonisolated struct MeetingDetail: Decodable, Sendable {
     let openQuestions: [String]
     let followUps: [String]
     let processing: MeetingProcessingMetadata?
+    let speakers: MeetingSpeakers?
     let hasSummary: Bool
     let hasMemory: Bool
 
@@ -114,6 +136,7 @@ nonisolated struct MeetingDetail: Decodable, Sendable {
         case openQuestions = "open_questions"
         case followUps = "follow_ups"
         case processing
+        case speakers
         case hasSummary = "has_summary"
         case hasMemory = "has_memory"
     }

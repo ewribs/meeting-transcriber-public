@@ -34,6 +34,7 @@ DEFAULT_SETTINGS = {
     "backup_keep_mirror": 60,
     "voice_recognition_enabled": False,
     "voice_update_participants": True,
+    "voice_pending_days": 180,
     "voice_python": "",
 }
 

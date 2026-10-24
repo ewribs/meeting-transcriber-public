@@ -124,6 +124,74 @@ def _normalize_processing(metadata: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _normalize_speakers(meeting_dir: Path) -> dict[str, Any] | None:
+    """Who spoke, from the optional voice step's speakers.json.
+
+    Returns None when the meeting has no voice data. Named voices are added
+    up per person; unnamed voices are counted only when they spoke long
+    enough to matter.
+    """
+    document = _read_json_object(meeting_dir / "speakers.json")
+    voices = document.get("voices")
+
+    if not document or not isinstance(voices, list):
+        return None
+
+    if document.get("remote_silent"):
+        return {
+            "remote_silent": True,
+            "people": [],
+            "unnamed_count": 0,
+            "unnamed_minutes": 0.0,
+        }
+
+    thresholds = document.get("thresholds")
+    try:
+        min_seconds = float(
+            thresholds.get("min_seconds", 30)
+            if isinstance(thresholds, dict)
+            else 30
+        )
+    except (TypeError, ValueError):
+        min_seconds = 30.0
+
+    seconds_by_name: dict[str, float] = {}
+    unnamed_count = 0
+    unnamed_seconds = 0.0
+
+    for voice in voices:
+        if not isinstance(voice, dict):
+            continue
+
+        try:
+            seconds = float(voice.get("seconds") or 0)
+        except (TypeError, ValueError):
+            seconds = 0.0
+
+        name = _clean_text(voice.get("person"))
+
+        if voice.get("status") == "named" and name:
+            seconds_by_name[name] = seconds_by_name.get(name, 0.0) + seconds
+        elif seconds >= min_seconds:
+            unnamed_count += 1
+            unnamed_seconds += seconds
+
+    people = [
+        {"name": name, "minutes": round(seconds / 60, 1)}
+        for name, seconds in sorted(
+            seconds_by_name.items(),
+            key=lambda item: -item[1],
+        )
+    ]
+
+    return {
+        "remote_silent": False,
+        "people": people,
+        "unnamed_count": unnamed_count,
+        "unnamed_minutes": round(unnamed_seconds / 60, 1),
+    }
+
+
 def load_meeting_detail(meeting: dict[str, Any]) -> dict[str, Any]:
     """Load normalized detail for one catalog meeting.
 
@@ -141,6 +209,7 @@ def load_meeting_detail(meeting: dict[str, Any]) -> dict[str, Any]:
             "open_questions": [],
             "follow_ups": [],
             "processing": None,
+            "speakers": None,
             "has_summary": False,
             "has_memory": False,
         }
@@ -162,6 +231,7 @@ def load_meeting_detail(meeting: dict[str, Any]) -> dict[str, Any]:
         "open_questions": _normalize_text_list(memory, "open_questions"),
         "follow_ups": _normalize_text_list(memory, "follow_ups"),
         "processing": _normalize_processing(metadata),
+        "speakers": _normalize_speakers(meeting_dir),
         "has_summary": bool(summary),
         "has_memory": bool(memory),
     }
