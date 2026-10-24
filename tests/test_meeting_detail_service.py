@@ -222,6 +222,19 @@ class MeetingSpeakersTests(unittest.TestCase):
         self.assertEqual(speakers["unnamed_count"], 1)
         self.assertEqual(speakers["unnamed_minutes"], 1.5)
 
+    def test_static_voices_are_not_counted_as_people(self):
+        speakers = self.detail_for({
+            "remote_silent": False,
+            "thresholds": {"min_seconds": 30},
+            "voices": [
+                {"id": "00", "seconds": 90, "status": "unknown", "person": None},
+                {"id": "01", "seconds": 120, "status": "unknown", "person": None,
+                 "noise": "static"},
+            ],
+        })["speakers"]
+        self.assertEqual(speakers["unnamed_count"], 1)
+        self.assertEqual(speakers["unnamed_minutes"], 1.5)
+
     def test_silent_remote_is_reported(self):
         speakers = self.detail_for(
             {"remote_silent": True, "voices": []})["speakers"]

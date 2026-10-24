@@ -197,6 +197,31 @@ class VoiceStore:
         person.centroid = clean_centroid(person.fingerprints)
         return len(new)
 
+    def remove_matching(
+        self,
+        person_id: str,
+        fingerprints: Sequence[Sequence[float]],
+        min_score: float = 0.9999,
+    ) -> int:
+        """Take back fingerprints that were learned by mistake.
+
+        Removes the person's fingerprints that are (nearly) identical to any
+        of ``fingerprints`` and counts one learning step less. Returns how many
+        were removed.
+        """
+        person = self._require(person_id)
+        targets = [normalize(f) for f in fingerprints]
+        kept = [
+            f for f in person.fingerprints
+            if not any(dot(f, t) >= min_score for t in targets)
+        ]
+        removed = len(person.fingerprints) - len(kept)
+        if removed:
+            person.fingerprints = kept
+            person.enrollments = max(0, person.enrollments - 1)
+            person.centroid = clean_centroid(kept) if kept else None
+        return removed
+
     def centroids(self) -> dict[str, Vector]:
         return {
             pid: p.centroid for pid, p in self._people.items() if p.centroid

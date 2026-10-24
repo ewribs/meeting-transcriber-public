@@ -177,6 +177,71 @@ assumed to produce output identical in quality to the larger model.
 The native Preferences UI can select any compatible model discovered through
 `ollama list`.
 
+## Optional: voice recognition
+
+Voice recognition turns the generic "Remote" speaker into real names. It is **not**
+part of the bootstrap and is off by default; skip this section unless you want it.
+Everything runs on your Mac.
+
+It needs a separate Python environment, because PyTorch and the speech models are
+large (several GB including model files) and are not needed by the rest of
+the app. It also needs a free Hugging Face account, because the speaker models are
+gated: you accept their terms once, and the downloads come from Hugging Face.
+
+**What it installs and downloads**
+
+| Item | Source | Purpose |
+| --- | --- | --- |
+| Python packages `pyannote.audio` (brings PyTorch), `numpy`, `soundfile` | PyPI, into the separate environment | Speaker detection and fingerprints |
+| Model `pyannote/speaker-diarization-3.1` | Hugging Face (gated) | Splits a recording into voices |
+| Model `pyannote/segmentation-3.0` | Hugging Face (gated) | Used by the pipeline above |
+| Model `pyannote/wespeaker-voxceleb-resnet34-LM` | Hugging Face | Voice fingerprints |
+| A Hugging Face access token (read) | Your Hugging Face account | Lets the environment download gated models |
+
+Meeting Transcriber never includes, stores or sends your token. It lives in
+Hugging Face's own cache (`~/.cache/huggingface`) and is used only by the voice
+environment. No audio or fingerprints are uploaded anywhere.
+
+**Steps**
+
+1. Finish the normal setup first (above), so `python@3.13` and `ffmpeg` exist.
+2. Create the voice environment anywhere outside the repository, for example:
+
+```bash
+python3.13 -m venv ~/voice-venv
+~/voice-venv/bin/pip install --upgrade pip
+~/voice-venv/bin/pip install pyannote.audio soundfile numpy
+```
+
+   This was developed and tested with Python 3.13, `pyannote.audio` 4.x, PyTorch
+   2.x and NumPy 2.x. The install is large and can take several minutes.
+
+3. Create a free account at [huggingface.co](https://huggingface.co), then create an
+   access token with **Read** permission (Settings → Access Tokens).
+4. While signed in, open each model page listed above and accept its conditions if
+   it asks (the pages are `huggingface.co/pyannote/speaker-diarization-3.1`,
+   `huggingface.co/pyannote/segmentation-3.0` and
+   `huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM`).
+5. Log in from the voice environment and paste your token when asked:
+
+```bash
+~/voice-venv/bin/hf auth login
+```
+
+6. Tell Meeting Transcriber where the environment is, then check it:
+
+```bash
+python3 voice_cli.py set-python ~/voice-venv/bin/python
+python3 voice_cli.py check
+```
+
+   `check` reports each package and each model as `ok`, `MISSING`, `ACCEPT` (open
+   that model page and accept its conditions) or `LOGIN`, so you know exactly what
+   is left. It downloads nothing and sends no audio. The models themselves download
+   the first time a recording is analyzed (a few hundred MB, one time).
+7. Continue with [Voice recognition](USER_GUIDE.md#voice-recognition-optional) in the
+   User Guide to learn your first people and turn it on.
+
 ## Configurable paths and install metadata
 
 Setup writes local configuration under:
@@ -337,6 +402,14 @@ Then use **Refresh Models** in Preferences.
 which whisper-cli
 ls -lh ~/whisper/models/ggml-medium.en.bin
 ```
+
+### Voice recognition says it is not ready
+
+Run `python3 voice_cli.py check`. Each line names the fix: install a missing
+package in the voice environment, accept a model's conditions on its Hugging Face
+page, or run `hf auth login` in that environment. If the check passes but a first
+analysis fails with a "gated repo" or "could not download" message, rerun it with a
+working network connection.
 
 ### Native recording input is missing
 

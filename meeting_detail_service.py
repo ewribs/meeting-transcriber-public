@@ -172,6 +172,8 @@ def _normalize_speakers(meeting_dir: Path) -> dict[str, Any] | None:
 
         if voice.get("status") == "named" and name:
             seconds_by_name[name] = seconds_by_name.get(name, 0.0) + seconds
+        elif voice.get("noise"):
+            continue  # static or silence, not a person
         elif seconds >= min_seconds:
             unnamed_count += 1
             unnamed_seconds += seconds

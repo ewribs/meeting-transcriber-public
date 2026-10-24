@@ -60,7 +60,7 @@ def collect_occurrences(runs, pending_dir: Path, min_seconds: float):
         for voice in document.get("voices", []):
             prints = pending.get(voice["id"]) or []
             if (voice["status"] == "unknown" and voice["seconds"] >= min_seconds
-                    and len(prints) >= 2):
+                    and len(prints) >= 2 and not vs.is_noise(voice)):
                 items.append(voice_groups.Occurrence(
                     folder.name, voice["id"], voice["seconds"], vp.centroid(prints)))
     return items
@@ -303,6 +303,7 @@ def meeting_voices(run_dir: Path, pending_dir: Path) -> dict:
                 {"person": best["person"], "score": best["score"]}
                 if best and voice["status"] != "named" else None),
             "short": voice["seconds"] < vp.MIN_VOICE_SECONDS,
+            "noise": voice.get("noise") if vs.is_noise(voice) else None,
             "can_learn": len(saved.get(voice["id"], []))
             >= vp.MIN_FINGERPRINTS_TO_ENROLL,
         })
@@ -374,6 +375,54 @@ def name_meeting_voice(
     return {"named": len(info["voices"]), "learned": info["enrolled"]}
 
 
+def correct_meeting_voice(
+    run_dir: Path,
+    voice_id: str,
+    name: str,
+    store: vp.VoiceStore,
+    pending_dir: Path,
+    archive_dir: Path,
+    *,
+    update_participants: bool | None = None,
+) -> dict:
+    """Change the name given to one voice, and take back what was learned.
+
+    If the voice was named by hand, the fingerprints it taught the old person
+    are removed (when the saved copies still exist), and a profile that was
+    created only by this mistake is deleted. The voice is then named as the
+    new person. The caller saves the store.
+    """
+    name = clean_name(name)
+    document = vs.read_speakers(run_dir)
+    voice = next((v for v in (document or {}).get("voices", [])
+                  if v["id"] == voice_id), None)
+    if voice is None:
+        raise ReviewError("That voice was not found in this meeting.")
+    if voice["status"] != "named":
+        raise ReviewError("That voice has no name to change. Name it instead.")
+    old = store.find(voice.get("person_id") or "")
+    if old is not None and old.name.lower() == name.lower():
+        raise ReviewError("That voice is already named " + old.name + ".")
+
+    removed, removed_person, could_unlearn = 0, False, True
+    if old is not None and voice.get("via") == "user":
+        saved = vs.load_pending(Path(run_dir).name, pending_dir).get(voice_id)
+        if saved:
+            removed = store.remove_matching(old.person_id, saved)
+            if not old.fingerprints:
+                store.remove_person(old.person_id)
+                removed_person = True
+        else:
+            could_unlearn = False
+
+    info = name_meeting_voice(
+        run_dir, voice_id, name, store, pending_dir, archive_dir,
+        only_this=True, update_participants=update_participants)
+    return {**info, "removed": removed, "removed_person": removed_person,
+            "could_unlearn": could_unlearn,
+            "was": old.name if old else None}
+
+
 def recent_meetings(output_dir: Path, archive_dir: Path, limit: int = 20) -> list[dict]:
     """Newest meetings that have voice information, for choosing one."""
     found = []
@@ -390,7 +439,8 @@ def recent_meetings(output_dir: Path, archive_dir: Path, limit: int = 20) -> lis
             "title": voice_sources.recording_suffix(folder.name),
             "date": folder.name[:10],
             "voices": len(voices),
-            "unnamed": sum(1 for v in voices if v["status"] != "named"),
+            "unnamed": sum(1 for v in voices
+                           if v["status"] != "named" and not vs.is_noise(v)),
         })
         if len(found) >= limit:
             break

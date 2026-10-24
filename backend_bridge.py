@@ -2486,6 +2486,30 @@ def voice_meeting_name_payload(
     return {"schema_version": 1, **result, "rematch": rematch}
 
 
+def voice_meeting_change_payload(
+    run: str,
+    voice_id: str,
+    name: str,
+) -> dict[str, Any]:
+    import voice_review
+    import voice_service
+
+    folder, output_dir, _m, archive_dir, pending_dir, store = _meeting_run(run)
+    result = voice_review.correct_meeting_voice(
+        folder, voice_id, name, store, pending_dir, archive_dir)
+    store.save(voice_service.STORE_PATH)
+
+    try:
+        counts = voice_review.rematch_everything(
+            output_dir, archive_dir, pending_dir, store,
+            refresh_index_anyway=True)
+        rematch = {**counts, "summary": voice_review.rematch_summary(counts)}
+    except Exception as error:
+        rematch = {"error": str(error)}
+
+    return {"schema_version": 1, **result, "rematch": rematch}
+
+
 def voice_recent_meetings_payload() -> dict[str, Any]:
     import voice_review
 
@@ -3063,6 +3087,14 @@ def build_parser() -> argparse.ArgumentParser:
     voice_meeting_name_parser.add_argument(
         "also_similar", nargs="?", default="no")
 
+    voice_meeting_change_parser = subparsers.add_parser(
+        "voice-meeting-change",
+        help="Change the name of one voice in one meeting",
+    )
+    voice_meeting_change_parser.add_argument("run")
+    voice_meeting_change_parser.add_argument("voice_id")
+    voice_meeting_change_parser.add_argument("name")
+
     subparsers.add_parser(
         "voice-recent-meetings",
         help="List recent meetings that have voice information",
@@ -3521,6 +3553,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "voice-meeting-name":
             payload = voice_meeting_name_payload(
                 args.run, args.voice_id, args.name, args.also_similar)
+
+        elif args.command == "voice-meeting-change":
+            payload = voice_meeting_change_payload(
+                args.run, args.voice_id, args.name)
 
         elif args.command == "voice-recent-meetings":
             payload = voice_recent_meetings_payload()

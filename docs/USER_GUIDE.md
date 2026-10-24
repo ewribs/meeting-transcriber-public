@@ -136,7 +136,7 @@ An archived retention value of `0` means **Forever**.
 
 By default every voice on the call except yours is labeled **Remote**. Voice recognition can learn who people are from their voices and use that to show the real participants of a meeting. It is off by default and runs entirely on your Mac.
 
-**What you need.** The voice models need PyTorch and the pyannote models, which are large, so they live in their own Python environment, separate from the app's. The models are gated: you need a free Hugging Face account and must accept the models' terms once. The app never includes or sends an access token. Tell the app where that environment is with `python3 voice_cli.py set-python PATH_TO_PYTHON`. Setting up the voice environment is a command-line step; naming people can be done in the app (see below) or in Terminal.
+**What you need.** The voice models need PyTorch and the pyannote models, which are large, so they live in their own Python environment, separate from the app's. The models are gated: you need a free Hugging Face account and must accept the models' terms once. The app never includes or sends an access token. [Installation](INSTALL.md#optional-voice-recognition) has the step-by-step setup; `python3 voice_cli.py check` tells you what is still missing. Setting up the voice environment is a command-line step; naming people can be done in the app (see below) or in Terminal.
 
 **How it learns.** Fingerprints are stored only on your Mac. Naming is always your decision: a voice is named only when it clearly matches one person and nobody else, and a voice with too little speech is left unnamed rather than guessed.
 
@@ -151,6 +151,10 @@ By default every voice on the call except yours is labeled **Remote**. Voice rec
 - **Voices…** in a meeting's header (and **Name Voices in a Meeting** on the Speakers screen) lists every voice in that one meeting, so you can name a voice right after a meeting even if it has not appeared in other meetings yet. It names only the voice you choose. A voice with very little speech can be labeled in that meeting, but the app does not learn from it.
 
 Not every voice is worth naming. On a Speakers card, **Hide for Now** moves the group to a collapsed *Hidden* section to come back to later, and **Don't Track** moves it to *Not tracked* for people you never want to label. Both are remembered per meeting voice only, with no fingerprint saved, and **Bring Back** undoes either one. A hidden or ignored group shows again if a later meeting adds a new voice to it.
+
+Sometimes the voice-splitting step mistakes static or silence for a speaker. Those voices are measured and marked "static" (`python3 voice_cli.py noise-scan` checks meetings analyzed earlier). They no longer form groups, count as unnamed in **Who Spoke**, or inflate the unnamed counts, and the Voices sheet shows them at the bottom with a note and an **It is a person** option in case one is real.
+
+If you gave a voice the wrong name, open the meeting's **Voices…** sheet and use **Change…** next to the name. If you named the voice by hand, what the app learned from it for the wrong person is taken back (as long as the saved fingerprints still exist), a profile that came only from that mistake is deleted, and your other meetings are re-checked.
 
 After you name someone, the app re-checks your other meetings against what it just learned. This takes seconds and uses the fingerprints it already saved, so it needs no audio and no voice tools (`python3 voice_cli.py rematch` does the same from Terminal). Meetings whose saved fingerprints are gone need `identify-all --redo` instead. Short listening clips are deleted when you leave the Speakers screen or quit the app.
 

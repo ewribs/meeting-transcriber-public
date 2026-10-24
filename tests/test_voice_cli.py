@@ -791,6 +791,88 @@ class ReviewBridgeTests(UnknownsFixture):
         import voice_review
         self.assertFalse(voice_review.refresh_index(self.root / "nowhere"))
 
+    def mark_static(self, run, voice_id="SPEAKER_01"):
+        import voice_service
+        document = voice_service.read_speakers(self.output / run)
+        for voice in document["voices"]:
+            if voice["id"] == voice_id:
+                voice["noise"] = "static"
+        voice_service.write_speakers(self.output / run, document)
+
+    def test_static_voices_do_not_form_groups_or_count_as_unnamed(self):
+        runs = ["2026-10-01_0900_JordanSync100126",
+                "2026-10-02_0900_PlanJordan100226",
+                "2026-10-03_0900_JordanAndAlex100326"]
+        self.assertEqual(len(self.bridge.voice_groups_payload()["groups"]), 1)
+        for run in runs:
+            self.mark_static(run)
+        self.assertEqual(self.bridge.voice_groups_payload()["groups"], [])
+        sync = next(m for m in self.bridge.voice_recent_meetings_payload()["meetings"]
+                    if m["run"] == runs[0])
+        self.assertEqual(sync["unnamed"], 0)
+        voices = self.bridge.voice_meeting_payload(runs[0])["voices"]
+        self.assertEqual(next(v for v in voices if v["id"] == "SPEAKER_01")["noise"], "static")
+
+    def test_a_quick_recheck_keeps_the_static_marks(self):
+        import voice_service
+        run = "2026-10-01_0900_JordanSync100126"
+        self.mark_static(run)
+        voice_service.rematch_run(
+            self.output / run, self.store(), self.voices / "pending")
+        voices = voice_service.read_speakers(self.output / run)["voices"]
+        self.assertEqual(
+            next(v for v in voices if v["id"] == "SPEAKER_01").get("noise"), "static")
+
+    OTHER = "2026-10-02_0900_PlanJordan100226"
+
+    def name_wrongly(self):
+        import voice_review
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=False):
+            self.bridge.voice_meeting_name_payload(self.RUN, "SPEAKER_01", "Jordan")
+
+    def test_changing_a_wrong_name_takes_back_what_was_learned(self):
+        import voice_review
+        self.name_wrongly()
+        self.assertEqual(self.voice_of(self.OTHER, "SPEAKER_01")["person"], "Jordan")
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=False):
+            result = self.bridge.voice_meeting_change_payload(
+                self.RUN, "SPEAKER_01", "Casey")
+        self.assertEqual(result["was"], "Jordan")
+        self.assertTrue(result["could_unlearn"])
+        self.assertTrue(result["removed_person"])
+        self.assertGreaterEqual(result["removed"], 3)
+        store = self.store()
+        self.assertIsNone(store.find("Jordan"))
+        self.assertGreaterEqual(store.find("Casey").enrollments, 1)
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["person"], "Casey")
+        # Other meetings follow the corrected profile.
+        self.assertEqual(self.voice_of(self.OTHER, "SPEAKER_01")["person"], "Casey")
+
+    def test_without_saved_fingerprints_the_old_profile_is_kept_and_you_are_told(self):
+        import voice_review, voice_service
+        self.name_wrongly()
+        voice_service.delete_pending(self.RUN, self.voices / "pending")
+        with mock.patch.object(voice_review, "_participants_setting",
+                               return_value=False):
+            result = self.bridge.voice_meeting_change_payload(
+                self.RUN, "SPEAKER_01", "Casey")
+        self.assertFalse(result["could_unlearn"])
+        self.assertEqual(result["removed"], 0)
+        self.assertIsNotNone(self.store().find("Jordan"))
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["person"], "Casey")
+
+    def test_changing_needs_a_named_voice_and_a_different_name(self):
+        with self.assertRaises(ValueError):
+            self.bridge.voice_meeting_change_payload(self.RUN, "SPEAKER_01", "Casey")
+        self.name_wrongly()
+        with self.assertRaises(ValueError):
+            self.bridge.voice_meeting_change_payload(self.RUN, "SPEAKER_01", "jordan")
+        with self.assertRaises(ValueError):
+            self.bridge.voice_meeting_change_payload(self.RUN, "SPEAKER_77", "Casey")
+        self.assertEqual(self.voice_of(self.RUN, "SPEAKER_01")["person"], "Jordan")
+
     def test_recent_meetings_lists_newest_first_with_counts(self):
         meetings = self.bridge.voice_recent_meetings_payload()["meetings"]
         self.assertEqual(meetings[0]["run"], "2026-10-06_0900_Roadmap100626")

@@ -90,6 +90,7 @@ Depending on what is already installed, setup may contact:
 | `huggingface.co/ggerganov/whisper.cpp` | Download `ggml-medium.en.bin` when missing. |
 | Ollama model registry | `ollama pull` for the model selected during setup. |
 | `localhost:11434` | Check the local Ollama API. This is local machine traffic. |
+| PyPI and `huggingface.co` (optional voice recognition only) | You install the voice environment's packages from PyPI, and the speaker models download from Hugging Face. `voice_cli.py check` also asks Hugging Face whether your login may use each model. Not part of setup. |
 
 The installer prints these actions rather than hiding them.
 
@@ -195,11 +196,16 @@ setup scripts installs it.
 If you choose to use it:
 
 - It needs a separate Python environment with PyTorch and the pyannote models
-  (roughly 1 to 2 GB). You create that environment yourself and point the app
-  at it with `python3 voice_cli.py set-python PATH`.
+  (several GB including the model files). You create that environment yourself
+  and point the app at it with `python3 voice_cli.py set-python PATH`; the steps
+  are in [Installation](INSTALL.md#optional-voice-recognition), and
+  `python3 voice_cli.py check` reports what is still missing.
 - The models are gated on Hugging Face. Downloading them requires a free
   account and accepting their terms, and the download goes to Hugging Face. The
-  app never includes, stores or sends an access token on your behalf.
+  app never includes, stores or sends an access token on your behalf: you log
+  in with Hugging Face's own `hf auth login` inside the voice environment, which
+  keeps the token in Hugging Face's cache, and the app only ever checks that a
+  login exists (it never reads or prints the token).
 - No audio or fingerprints are uploaded. The analysis runs on your Mac.
 - Voice fingerprints are biometric data about other people. They are stored
   only in `~/Library/Application Support/Meeting Transcriber/voices/` with

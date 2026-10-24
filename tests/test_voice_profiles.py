@@ -318,5 +318,37 @@ class EliminationTests(unittest.TestCase):
         self.assertIsNone(hint)
 
 
+class RemoveMatchingTests(unittest.TestCase):
+    def test_removes_only_the_fingerprints_that_were_learned(self):
+        store = vp.VoiceStore()
+        person = store.add_person("Person A")
+        mistaken = samples(PERSON_B, count=10, seed=7)
+        store.enroll(person.person_id, samples(PERSON_A, count=20, seed=1))
+        store.enroll(person.person_id, mistaken)
+        self.assertEqual(person.enrollments, 2)
+        removed = store.remove_matching(person.person_id, mistaken)
+        self.assertEqual(removed, 10)
+        self.assertEqual(len(person.fingerprints), 20)
+        self.assertEqual(person.enrollments, 1)
+        self.assertGreater(vp.dot(person.centroid, PERSON_A), 0.9)
+
+    def test_nothing_matching_changes_nothing(self):
+        store = vp.VoiceStore()
+        person = store.add_person("Person A")
+        store.enroll(person.person_id, samples(PERSON_A, count=10, seed=1))
+        self.assertEqual(
+            store.remove_matching(person.person_id, samples(PERSON_B, count=5, seed=3)), 0)
+        self.assertEqual(person.enrollments, 1)
+
+    def test_removing_everything_leaves_an_empty_profile(self):
+        store = vp.VoiceStore()
+        person = store.add_person("Person A")
+        prints = samples(PERSON_A, count=5, seed=1)
+        store.enroll(person.person_id, prints)
+        store.remove_matching(person.person_id, prints)
+        self.assertEqual(person.fingerprints, [])
+        self.assertIsNone(person.centroid)
+
+
 if __name__ == "__main__":
     unittest.main()

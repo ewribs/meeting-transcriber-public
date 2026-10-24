@@ -82,6 +82,7 @@ def _run_voice_step(
             vs.read_speakers(run_dir),
             vs.build_speakers_document(payload, store),
         )
+        _mark_static(audio_path, document)
         vs.write_speakers(run_dir, document)
         vs.mirror_speakers(run_dir, archive_dir)
         if not payload.get("remote_silent"):
@@ -99,6 +100,15 @@ def _run_voice_step(
         if isinstance(error, (KeyboardInterrupt, SystemExit)):
             raise
         return f"skipped: {error}"
+
+
+def _mark_static(audio_path, document: dict) -> None:
+    """Mark unnamed voices that are really static. Never raises."""
+    try:
+        import voice_noise
+        voice_noise.tag_document(Path(audio_path), document)
+    except Exception:
+        pass
 
 
 def _update_participants(run_dir, document, store, archive_dir) -> str:

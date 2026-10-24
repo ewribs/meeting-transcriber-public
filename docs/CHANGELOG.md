@@ -6,6 +6,16 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.2 — 2026-10-24
+
+### Added
+- Voices that are really static or silence are detected and set aside: they no longer form groups on the Speakers screen, count as unnamed in Who Spoke, or inflate unnamed counts, and the Voices sheet shows them last with an **It is a person** option. `voice_cli.py noise-scan` checks meetings analyzed earlier; `noise-check RUN` shows the measurements.
+- **Change…** in the meeting Voices sheet corrects a wrong name and takes back what the app learned from it, deleting a profile that came only from the mistake.
+- `voice_cli.py check` reports whether the voice environment is ready (packages, Hugging Face login, access to each model).
+
+### Documentation
+- Installation guide: a step-by-step voice-recognition section covering the separate Python environment, the Hugging Face account, token and gated model pages, and how to verify the setup.
+
 ## v2.1 — 2026-10-24
 
 ### Added (Speakers, optional voice recognition)

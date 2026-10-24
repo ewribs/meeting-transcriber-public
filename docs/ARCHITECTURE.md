@@ -83,6 +83,8 @@ Voice recognition replaces the generic `Remote` speaker with real names. It is o
 | `voice_groups.py` | Groups unnamed voices that keep coming back across meetings so one answer names many. |
 | `voice_participants.py` | Builds the participant list from the voices heard (plus names in the title, marked low confidence) and applies or restores it. |
 | `voice_review.py` | Shared review logic for the app and command line: recurring unnamed groups with stable ids, clips, naming a group or one voice, hide/ignore state (per voice, no fingerprints), and the fast re-match of all meetings. |
+| `voice_noise.py` | Measures a voice's audio (level, dynamics, spectral flatness, pure Python) to mark static or silence the splitting step mistook for a speaker. Marked voices are set aside, never deleted. |
+| `voice_check.py` | Read-only readiness check of the voice environment: packages, Hugging Face login, and access to each model. |
 | `voice_auto.py` | The optional step after a transcription, and the run log. Catches every failure. |
 | `voice_cli.py` | Command-line workflow for all of the above. |
 

@@ -95,7 +95,9 @@ With voice recognition on, the **Who Spoke** section lists the people heard and
 how long each spoke. **Voices…** in the meeting header opens a sheet with every
 voice in that meeting: listen to short clips, and name a voice you recognize.
 Only the voice you choose is named, and your other meetings are re-checked
-afterwards. See [Speakers](#speakers) below.
+afterwards. **Change…** next to a name fixes a wrong one and takes back what the
+app learned from it. Voices that are really static or silence are shown at the
+bottom with a note. See [Speakers](#speakers) below.
 
 ### Publish, unpublish and delete
 

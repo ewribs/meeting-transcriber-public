@@ -26,7 +26,7 @@ The project combines **SwiftUI**, **Python**, **whisper.cpp**, **Ollama/MLX**, a
 - Recovers unfinished recordings after a crash and keeps local backups of your folders and sessions.
 - Publishes completed meetings to a configurable archive/NAS, including verified source-audio archival and retention controls.
 - Adapts local-AI execution through Auto / Conservative / Balanced / High Performance profiles.
-- Optionally recognizes who spoke from their voice, so the meeting list can show real participants instead of "Remote". This is off by default, runs entirely on your Mac, and needs a separate setup (see the [User Guide](docs/USER_GUIDE.md#voice-recognition-optional)).
+- Optionally recognizes who spoke from their voice, so the meeting list can show real participants instead of "Remote". This is off by default, runs entirely on your Mac, and needs a separate setup, including a free Hugging Face account for the speaker models (see [Installation](docs/INSTALL.md#optional-voice-recognition) and the [User Guide](docs/USER_GUIDE.md#voice-recognition-optional)).
 
 ## Current architecture
 
@@ -47,7 +47,7 @@ Local dependencies
     +-- whisper.cpp
     +-- Ollama
     +-- ffmpeg / ffprobe
-    +-- PyTorch + pyannote (optional, separate environment, for voices)
+    +-- PyTorch + pyannote + Hugging Face models (optional, separate environment, for voices)
 ```
 
 **Design rule:** Swift owns the native application experience. Python remains the source of truth for meeting-processing and data behavior.

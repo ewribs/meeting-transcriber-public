@@ -16,6 +16,7 @@ nonisolated struct MeetingVoice: Decodable, Sendable, Identifiable, Equatable {
     let via: String?
     let suggestion: MeetingVoiceSuggestion?
     let short: Bool
+    let noise: String?
     let canLearn: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +28,7 @@ nonisolated struct MeetingVoice: Decodable, Sendable, Identifiable, Equatable {
         case via
         case suggestion
         case short
+        case noise
         case canLearn = "can_learn"
     }
 
@@ -61,6 +63,22 @@ nonisolated struct MeetingVoiceNameResult: Decodable, Sendable {
     let named: Int
     let learned: Int
     let rematch: VoiceRematch?
+}
+
+nonisolated struct MeetingVoiceChangeResult: Decodable, Sendable {
+    let was: String?
+    let removed: Int
+    let removedPerson: Bool
+    let couldUnlearn: Bool
+    let rematch: VoiceRematch?
+
+    enum CodingKeys: String, CodingKey {
+        case was
+        case removed
+        case removedPerson = "removed_person"
+        case couldUnlearn = "could_unlearn"
+        case rematch
+    }
 }
 
 nonisolated struct RecentVoiceMeeting: Decodable, Sendable, Identifiable, Equatable {
@@ -186,7 +204,10 @@ struct MeetingVoicesSheet: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    ForEach(voices) { voice in
+                    ForEach(
+                        voices.filter { $0.noise == nil }
+                            + voices.filter { $0.noise != nil }
+                    ) { voice in
                         MeetingVoiceRow(
                             run: target.run,
                             voice: voice,
@@ -246,12 +267,19 @@ private struct MeetingVoiceRow: View {
     @State private var name = ""
     @State private var isNaming = false
     @State private var showConfirm = false
+    @State private var showNameAnyway = false
+    @State private var isChanging = false
     @State private var errorMessage: String?
 
     private let backend = BackendService()
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Static or silence the splitting step mistook for a speaker.
+    private var isNoise: Bool {
+        voice.noise != nil && !voice.isNamed
     }
 
     var body: some View {
@@ -269,12 +297,38 @@ private struct MeetingVoiceRow: View {
                 if voice.isNamed, let person = voice.person {
                     Label(person, systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+
+                    if !isChanging {
+                        Button("Change…") {
+                            isChanging = true
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                    }
                 }
             }
 
-            clipsSection
+            if isNoise {
+                HStack {
+                    Text("Sounds like static or silence, not a person.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-            if !voice.isNamed {
+                    if !showNameAnyway {
+                        Button("It is a person") {
+                            showNameAnyway = true
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                    }
+                }
+            }
+
+            if !isNoise || showNameAnyway {
+                clipsSection
+            }
+
+            if (!voice.isNamed && (!isNoise || showNameAnyway)) || isChanging {
                 nameSection
             }
 
@@ -293,11 +347,13 @@ private struct MeetingVoiceRow: View {
             in: RoundedRectangle(cornerRadius: 10)
         )
         .confirmationDialog(
-            "Name voice \(voice.label) as \(trimmedName)?",
+            isChanging
+                ? "Change voice \(voice.label) to \(trimmedName)?"
+                : "Name voice \(voice.label) as \(trimmedName)?",
             isPresented: $showConfirm,
             titleVisibility: .visible
         ) {
-            Button("Name as \(trimmedName)") {
+            Button(isChanging ? "Change to \(trimmedName)" : "Name as \(trimmedName)") {
                 Task {
                     await nameVoice()
                 }
@@ -310,6 +366,10 @@ private struct MeetingVoiceRow: View {
     }
 
     private var confirmText: String {
+        if isChanging {
+            return "This renames the voice in this meeting. If you named it by hand before, what the app learned from it for \(voice.person ?? "the old name") is taken back, and your other meetings are re-checked."
+        }
+
         if voice.canLearn {
             return "This names the voice in this meeting and teaches the app what \(trimmedName) sounds like, so other meetings are checked too."
         }
@@ -403,7 +463,7 @@ private struct MeetingVoiceRow: View {
                     .fixedSize()
                 }
 
-                Button("Name Voice") {
+                Button(isChanging ? "Change Name" : "Name Voice") {
                     showConfirm = true
                 }
                 .buttonStyle(.borderedProminent)
@@ -456,6 +516,37 @@ private struct MeetingVoiceRow: View {
         }
 
         let chosen = trimmedName
+
+        if isChanging {
+            do {
+                let result = try await backend.changeMeetingVoice(
+                    run: run,
+                    voiceID: voice.id,
+                    name: chosen
+                )
+
+                var text = "Changed voice \(voice.label) to \(chosen)."
+
+                if result.removedPerson, let was = result.was {
+                    text += " The profile for \(was) was removed because it came only from this voice."
+                } else if result.removed > 0, let was = result.was {
+                    text += " What the app had learned from this voice for \(was) was taken back."
+                } else if !result.couldUnlearn, let was = result.was {
+                    text += " The app could not take back what it learned for \(was) because the saved fingerprints are gone. If \(was) now matches the wrong voices, remove that profile in Terminal: python3 voice_cli.py people --delete \(was)"
+                }
+
+                if let summary = result.rematch?.summary {
+                    text += " " + summary
+                }
+
+                isChanging = false
+                onNamed(text)
+            } catch {
+                errorMessage = voiceFriendlyMessage(error)
+            }
+
+            return
+        }
 
         do {
             let result = try await backend.nameMeetingVoice(

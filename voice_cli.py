@@ -3,6 +3,7 @@
 
     python3 voice_cli.py set-python PATH     tell the app where the voice
                                              environment's Python is
+    python3 voice_cli.py check               check the voice environment is ready
     python3 voice_cli.py enroll              learn people from one-on-ones
     python3 voice_cli.py people              list who is known
     python3 voice_cli.py identify RUN        work out who spoke in a meeting
@@ -12,6 +13,8 @@
                                              coming back, and name them
     python3 voice_cli.py rematch             re-check every meeting against the
                                              current fingerprints (fast, no audio)
+    python3 voice_cli.py noise-check RUN     measure whether each voice is speech
+                                             or static
     python3 voice_cli.py show RUN            show what was worked out
     python3 voice_cli.py confirm RUN ...     say who a voice is
 
@@ -160,6 +163,16 @@ def main(
 
     p = sub.add_parser("rematch", help="re-check all meetings against current fingerprints (fast)")
     p.add_argument("--no-archive", action="store_true")
+
+    sub.add_parser("check", help="check that the voice environment is ready")
+
+    p = sub.add_parser("noise-scan", help="mark voices in all meetings that are really static")
+    p.add_argument("--redo", action="store_true", help="also re-check meetings already checked")
+    p.add_argument("--no-archive", action="store_true")
+
+    p = sub.add_parser("noise-check", help="measure whether each voice in a meeting is speech or static")
+    p.add_argument("run")
+    p.add_argument("--audio", type=Path)
 
     p = sub.add_parser("participants")
     p.add_argument("--limit", type=int, default=20, help="meetings to show")
@@ -675,6 +688,7 @@ def main(
                         vs.read_speakers(folder),
                         vs.build_speakers_document(payload, store),
                     )
+                    voice_auto._mark_static(audio, document)
                     vs.write_speakers(folder, document)
                     vs.mirror_speakers(folder, archive_dir)
                     if not payload.get("remote_silent"):
@@ -696,6 +710,90 @@ def main(
                       f"(about {left} min left)")
             print(f"\nDone: {done_count} analyzed, {no_audio} without audio, "
                   f"{failed} failed.")
+            return 0
+
+        # ---------------------------------------------------------------- check
+        if args.command == "check":
+            import voice_check
+            python_path = _voice_python(None)
+            if not python_path:
+                print("Voice environment not set. Run: "
+                      "python3 voice_cli.py set-python PATH_TO_PYTHON")
+                return 2
+            ready, lines = voice_check.describe(voice_check.run_check(python_path))
+            print("Voice environment: " + python_path)
+            for line in lines:
+                print("  " + line)
+            print("\n" + ("Ready." if ready else "Not ready yet. Fix the lines above, "
+                          "then run this again."))
+            return 0 if ready else 1
+
+        # ------------------------------------------------------------ noise-scan
+        if args.command == "noise-scan":
+            import voice_noise
+            output_dir, meetings_dir, archive_dir = dirs or _default_dirs()
+            runs = _list_runs(output_dir, archive_dir, args.no_archive)
+            todo = []
+            for folder in runs:
+                try:
+                    document = vs.read_speakers(folder)
+                except vs.VoiceServiceError:
+                    continue
+                if (document and not document.get("remote_silent")
+                        and (args.redo or not document.get("noise_checked"))):
+                    todo.append((folder, document))
+            if not todo:
+                print("Nothing to do: every meeting has been checked.")
+                return 0
+            print(f"{len(todo)} meetings to check. Safe to stop with Ctrl-C and run again.\n")
+            marked_total = skipped = 0
+            for number, (folder, document) in enumerate(todo, start=1):
+                audio = voice_sources.resolve_audio(
+                    folder, meetings_dir, None, archive_dir)
+                if audio is None:
+                    skipped += 1
+                    print(f"[{number}/{len(todo)}] {folder.name}: no audio, skipped")
+                    continue
+                try:
+                    marked = voice_noise.tag_document(audio, document)
+                    vs.write_speakers(folder, document)
+                    vs.mirror_speakers(folder, archive_dir)
+                except (vs.VoiceServiceError, OSError, Exception) as error:
+                    skipped += 1
+                    print(f"[{number}/{len(todo)}] {folder.name}: failed ({error})")
+                    continue
+                marked_total += marked
+                note = f"{marked} static" if marked else "clean"
+                print(f"[{number}/{len(todo)}] {folder.name}: {note}")
+            print(f"\nDone: {marked_total} static voices marked, {skipped} meetings skipped.")
+            return 0
+
+        # ----------------------------------------------------------- noise-check
+        if args.command == "noise-check":
+            import voice_noise
+            output_dir, meetings_dir, archive_dir = dirs or _default_dirs()
+            run_dir = _resolve_run(args.run, output_dir)
+            if run_dir is None:
+                print("Meeting folder not found: " + args.run)
+                return 2
+            document = vs.read_speakers(run_dir)
+            if not document:
+                print("This meeting has no voice information yet.")
+                return 1
+            audio = voice_sources.resolve_audio(
+                run_dir, meetings_dir, args.audio, archive_dir)
+            if audio is None:
+                print("No audio found for this meeting. Pass one with --audio PATH.")
+                return 2
+            rows = voice_noise.check_meeting(audio, document)
+            print("voice   minutes  level dB  dynamics dB  flatness  verdict           who")
+            for row in rows:
+                flat = "-" if row["flatness"] is None else f"{row['flatness']:.2f}"
+                print(f"{_short(row['id']):<7} {row['seconds'] / 60:>6.1f}  "
+                      f"{row['level_db']:>8.1f}  {row['dynamics_db']:>11.1f}  "
+                      f"{flat:>8}  {row['verdict']:<16}  {row['person'] or ''}")
+            print("\nSpeech has a lot of dynamics and low flatness; static is steady "
+                  "and flat. The verdict is provisional.")
             return 0
 
         # ----------------------------------------------- identify / show / confirm

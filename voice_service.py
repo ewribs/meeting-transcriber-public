@@ -215,6 +215,21 @@ def build_speakers_document(
     }
 
 
+def is_noise(voice: dict) -> bool:
+    """True for an unnamed voice marked as static or silence."""
+    return bool(voice.get("noise")) and voice.get("status") != "named"
+
+
+def carry_noise(old: dict, new: dict) -> None:
+    """Keep the static marks when a meeting is re-matched without audio."""
+    marks = {v["id"]: v["noise"] for v in old.get("voices", []) if v.get("noise")}
+    for voice in new.get("voices", []):
+        if voice["id"] in marks and voice["status"] != "named":
+            voice["noise"] = marks[voice["id"]]
+    if old.get("noise_checked"):
+        new["noise_checked"] = True
+
+
 def keep_confirmations(old: dict | None, new: dict) -> dict:
     """Carry names the user confirmed by hand into a freshly built document.
 
@@ -354,6 +369,7 @@ def rematch_run(
         old,
         build_speakers_document(rebuilt, store, old.get("expected_names", [])),
     )
+    carry_noise(old, new)
     if _voice_summary(new) == _voice_summary(old):
         return "same", old
     write_speakers(run_dir, new)
