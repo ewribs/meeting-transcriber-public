@@ -77,5 +77,41 @@ class ActionItemsPassTests(unittest.TestCase):
         self.assertEqual(pass_.clean_due(" Friday "), "Friday")
 
 
+class RepeatTests(unittest.TestCase):
+    def test_same_job_worded_twice_is_a_repeat(self):
+        seen = [("Sam", "Process the Alpha, Beta and Gamma purchase orders",
+                 "I will process the purchase orders early this week")]
+        self.assertTrue(pass_.repeats(
+            "Sam", "Process Alpha, Beta and Gamma renewals early in the week",
+            "I will process the renewals early this week", seen))
+
+    def test_two_different_jobs_from_one_quote_are_kept(self):
+        seen = [("Sam", "Send the budget to finance",
+                 "I will send the budget to finance and book the review room")]
+        self.assertFalse(pass_.repeats(
+            "Sam", "Book the review room",
+            "I will send the budget to finance and book the review room", seen))
+
+    def test_the_same_words_for_different_people_are_kept(self):
+        seen = [("Sam", "Send the renewal summary to Dana", "")]
+        self.assertFalse(pass_.repeats("Dana", "Send the renewal summary to Dana", "", seen))
+
+    def test_an_unknown_owner_can_repeat_a_named_one(self):
+        seen = [("Sam", "Check whether the tool has embedded AI features", "")]
+        self.assertTrue(pass_.repeats(
+            "Unknown", "Check with the tool vendor about embedded AI features", "", seen))
+
+    def test_pass_drops_a_repeat_in_the_commitments(self):
+        rows = [
+            {"owner": "Sam", "task": "Send the renewal summary to Dana", "due": "Friday",
+             "evidence": "I will send the renewal summary to Dana by Friday."},
+            {"owner": "Sam", "task": "Send Dana the renewal summary", "due": "Friday",
+             "evidence": "I will send the renewal summary to Dana by Friday."},
+        ]
+        memory, ok = run({"commitments": [], "follow_ups": []}, fake_llm(rows))
+        self.assertTrue(ok)
+        self.assertEqual(len(memory["commitments"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

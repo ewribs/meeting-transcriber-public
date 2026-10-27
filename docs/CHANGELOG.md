@@ -6,6 +6,14 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.5.1 — 2026-10-27
+
+### Fixed
+- The named action items pass merges the same job worded twice (same owner, close wording, or nearly the same quote with similar wording). Two different jobs from one quote are kept.
+
+### Developer tools
+- Read-only scans for repeated action items, decisions, risks and open questions, a window probe for checking whether a missed item is found from a short passage, and scripts to compare models on the same meetings.
+
 ## v2.5 — 2026-10-27
 
 ### Added (optional, off by default; needs voice recognition)

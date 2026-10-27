@@ -95,6 +95,43 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip().casefold()
 
 
+_FILLER = frozenset(
+    "the a an to of and or for with in on at by is be will that this it as from about "
+    "up out into so can then also just".split())
+_NO_OWNER = {"", "unknown", "unidentified", "remote", "unowned"}
+
+
+def _content(text: str) -> set[str]:
+    return {w[:-1] if w.endswith("s") and len(w) > 3 else w
+            for w in re.findall(r"[a-z0-9']+", str(text).casefold())
+            if w not in _FILLER and len(w) > 2}
+
+
+def _overlap(left: set[str], right: set[str]) -> float:
+    return len(left & right) / len(left | right) if left and right else 0.0
+
+
+def repeats(owner, task, evidence, seen: list[tuple]) -> bool:
+    """True when this item says the same thing as one already kept.
+
+    Two items for the same person (or an unknown person) are repeats when their
+    wording is close, or when they come from nearly the same quote and their
+    wording is at least somewhat close. One quote can hold two different jobs,
+    so a shared quote alone is not enough.
+    """
+    mine, quote = _content(task), _content(evidence)
+    for other_owner, other_task, other_evidence in seen:
+        a, b = norm(owner), norm(other_owner)
+        if a != b and a not in _NO_OWNER and b not in _NO_OWNER:
+            continue
+        wording = _overlap(mine, _content(other_task))
+        if wording >= 0.4:
+            return True
+        if wording >= 0.3 and _overlap(quote, _content(other_evidence)) >= 0.6:
+            return True
+    return False
+
+
 _HEADER = re.compile(r"\[\d{1,2}:\d{2}(?::\d{2})?\]|\*\*[^*\n]{1,60}\*\*")
 
 
@@ -277,12 +314,14 @@ def run_action_items_pass(meeting_label, transcript, memory, ask_llm, split, sel
         firm = [item for item in kept if item.get("firm")]
         rest = [item for item in kept if not item.get("firm")]
 
-        commitments, shown = [], []
+        commitments, shown, seen = [], [], []
         for item in firm:
             words = _tokens(item["task"])
-            if near_duplicate(words, shown, jaccard=0.5):
+            if (near_duplicate(words, shown, jaccard=0.5)
+                    or repeats(item["owner"], item["task"], item["evidence"], seen)):
                 continue
             shown.append(words)
+            seen.append((item["owner"], item["task"], item["evidence"]))
             commitments.append({
                 "owner": item["owner"], "action": item["task"],
                 "due": clean_due(item.get("due")),
@@ -292,8 +331,11 @@ def run_action_items_pass(meeting_label, transcript, memory, ask_llm, split, sel
             if not isinstance(old, dict):
                 continue
             words = _tokens(str(old.get("action", "")))
-            if words and not near_duplicate(words, shown, jaccard=0.5):
+            triple = (old.get("owner", ""), old.get("action", ""), old.get("evidence", ""))
+            if words and not near_duplicate(words, shown, jaccard=0.5) \
+                    and not repeats(*triple, seen):
                 shown.append(words)
+                seen.append(triple)
                 commitments.append(old)
 
         others = []
@@ -301,9 +343,11 @@ def run_action_items_pass(meeting_label, transcript, memory, ask_llm, split, sel
             if len(others) >= OTHER_LIMIT:
                 break
             words = _tokens(item["task"])
-            if len(words) < 2 or near_duplicate(words, shown, jaccard=0.5):
+            if (len(words) < 2 or near_duplicate(words, shown, jaccard=0.5)
+                    or repeats(item["owner"], item["task"], item["evidence"], seen)):
                 continue
             shown.append(words)
+            seen.append((item["owner"], item["task"], item["evidence"]))
             others.append(other_line(item))
 
         result = dict(memory)
