@@ -8,6 +8,7 @@ import re
 
 from pathlib import Path
 from chunking import chunk_transcript
+import transcript_view
 from query.execution import (
     choose_execution_plan,
     estimate_tokens,
@@ -1188,13 +1189,13 @@ def _explicit_decision_fallbacks(chunk: str) -> list[dict]:
     for raw_line in chunk.splitlines():
         line = raw_line.strip()
         line = re.sub(
-            r"^\[[0-9:]+\]\s*(?:\*\*(?:Mic|Remote)\*\*)?\s*",
+            r"^\[[0-9:]+\]\s*(?:" + transcript_view.BOLD_SPEAKER + r")?\s*",
             "",
             line,
             flags=re.IGNORECASE,
         )
         line = re.sub(
-            r"^\*\*(?:Mic|Remote)\*\*\s*",
+            r"^" + transcript_view.BOLD_SPEAKER + r"\s*",
             "",
             line,
             flags=re.IGNORECASE,
@@ -1618,6 +1619,16 @@ _VAGUE_COMMITMENT_ACTION_PATTERN = re.compile(
 )
 
 
+_STANDING_STANCE_ACTION_PATTERN = re.compile(
+    r"^(?:be|stay|keep|remain)\s+(?:on\s+top\s+of|ahead\s+of)\s+"
+    r"(?:it|that|this|things|the\s+(?:issue|situation|matter|problem))\.?$",
+    flags=re.IGNORECASE,
+)
+
+# "... right now" describes something done during the meeting itself.
+_DONE_IN_THE_MEETING_PATTERN = re.compile(r"\bright\s+now\b", flags=re.IGNORECASE)
+
+
 def _commitment_action_is_self_contained(action: str) -> bool:
     """Require a durable action that names its object/topic/recipient.
 
@@ -1631,6 +1642,10 @@ def _commitment_action_is_self_contained(action: str) -> bool:
     if not text:
         return False
     if _VAGUE_COMMITMENT_ACTION_PATTERN.fullmatch(text):
+        return False
+    if _STANDING_STANCE_ACTION_PATTERN.fullmatch(text):
+        return False
+    if _DONE_IN_THE_MEETING_PATTERN.search(text):
         return False
     if _SECOND_PERSON_COMMITMENT_REFERENCE_PATTERN.search(text):
         return False
@@ -2063,7 +2078,7 @@ def _is_well_formed_question(question: str) -> bool:
     if not text:
         return False
     if re.search(
-        r"\[\d{1,2}:\d{2}\]|\*\*(?:Mic|Remote)\*\*|"
+        r"\[\d{1,2}:\d{2}\]|" + transcript_view.BOLD_SPEAKER + "|"
         r"\((?:static|indistinct|inaudible|unintelligible|crosstalk)[^)]*\)",
         text,
         flags=re.IGNORECASE,
@@ -2189,8 +2204,9 @@ def _question_similarity_tokens(question: str) -> set[str]:
         "were", "do", "does", "did", "can", "could", "will", "would",
         "should", "have", "has", "i", "we", "you", "they", "he", "she",
     }
+    from memory_reconciliation import stem_word
     return {
-        token.casefold()
+        stem_word(token.casefold())
         for token in re.findall(r"[A-Za-z0-9&'-]+", question)
         if len(token) >= 3 and token.casefold() not in ignored
     }
@@ -2280,10 +2296,7 @@ def _contextualize_open_question(question: str, transcript: str) -> str | None:
         return None
 
     verb = question_match.group("verb")
-    block_start = max(
-        transcript.rfind("**Mic**", 0, start),
-        transcript.rfind("**Remote**", 0, start),
-    )
+    block_start = transcript_view.last_marker_before(transcript, start)
     context_start = max(block_start, start - 420)
     before = re.sub(r"\s+", " ", transcript[context_start:start]).strip()
 
@@ -2401,7 +2414,7 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     # contain more than one human voice in one Remote block, so this also catches
     # question/answer exchanges that have no intervening speaker marker.
     same_turn = re.split(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+        transcript_view.MARKER,
         after,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -2423,7 +2436,7 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
 
     # A concise direct response in the next exchange closes the question.
     next_turn = re.search(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*\s*(?:\n+)?(?P<text>.{0,260})",
+        transcript_view.MARKER + r"\s*(?:\n+)?(?P<text>.{0,260})",
         after,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -2484,7 +2497,7 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
         flags=re.IGNORECASE,
     ):
         local_explanation = re.sub(
-            r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+            transcript_view.MARKER,
             " ",
             after[:700],
             flags=re.IGNORECASE,
@@ -2504,8 +2517,8 @@ def _question_is_locally_unresolved(question: str, transcript: str) -> bool:
     return True
 
 
-_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone", "speaker", "speaker a", "speaker b"}
-_AUDIO_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone"}
+_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone", "speaker", "speaker a", "speaker b", "unidentified"}
+_AUDIO_CHANNEL_OWNER_LABELS = {"remote", "mic", "microphone", "unidentified"}
 
 
 def _commitment_action_family(action: str) -> set[str]:
@@ -2714,6 +2727,38 @@ def _normalize_open_questions(questions: list[str]) -> list[str]:
     return kept
 
 
+def _normalize_open_questions_keeping_verified(
+    questions: list[str],
+    verified: set[str],
+) -> list[str]:
+    """Like _normalize_open_questions, but a question the v12 event pass already
+    verified is not dropped for its wording alone ("Whether the vendor will ...").
+
+    The strict wording filter is tuned for noisy verbatim speech, which a
+    verified, normalized question is not. Anything the strict filter keeps is
+    kept exactly as before; verified questions it would drop are added after.
+    """
+
+    kept = _normalize_open_questions(questions)
+    if not verified:
+        return kept
+    extra: list[str] = []
+    for raw in questions:
+        question = re.sub(r"\s+", " ", str(raw or "")).strip(" -\t")
+        if (
+            question in verified
+            and question not in kept
+            and question not in extra
+            and _resolved_question_is_well_formed(question)
+            and not any(
+                _questions_are_near_duplicates(question, existing)
+                for existing in [*kept, *extra]
+            )
+        ):
+            extra.append(question)
+    return [*kept, *extra]
+
+
 _UNRESOLVED_CONTEXT_PATTERN = re.compile(
     r"\b(?:still\s+open|open\s+question|question\s+is|unclear|not\s+clear|"
     r"don['’]t\s+know|do\s+not\s+know|not\s+sure|not\s+knowing|"
@@ -2789,7 +2834,7 @@ def _explicit_unresolved_question_fallbacks(chunk: str) -> list[str]:
         # before the cue, it is probably unrelated discussion.
         before_cue = after[:cue.start()]
         speaker_boundaries = re.findall(
-            r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+            transcript_view.MARKER,
             before_cue,
             flags=re.IGNORECASE,
         )
@@ -3033,7 +3078,7 @@ def _recover_explicit_removal_decisions(transcript: str) -> list[dict]:
 
     recovered = []
     speaker_marker = re.compile(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+        transcript_view.MARKER,
         flags=re.IGNORECASE,
     )
     for match in removal.finditer(transcript):
@@ -3245,7 +3290,7 @@ def _contextualize_pronominal_removal_decision(
     # Restrict context to the current speaker turn when transcript markers are
     # present.  Without markers (e.g. unit tests), use a tight local window.
     marker = re.compile(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*",
+        transcript_view.MARKER,
         flags=re.IGNORECASE,
     )
     turn_start = 0
@@ -3813,7 +3858,7 @@ def _recover_explicit_negative_settlement_decisions(transcript: str) -> list[dic
         return []
 
     turn_pattern = re.compile(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*\s*(?P<body>.*?)(?=\n\s*\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*|\Z)",
+        transcript_view.MARKER + r"\s*(?P<body>.*?)(?=\n\s*" + transcript_view.MARKER + r"|\Z)",
         flags=re.IGNORECASE | re.DOTALL,
     )
     settlement = re.compile(
@@ -3871,7 +3916,7 @@ def _recover_explicit_tbd_questions(transcript: str) -> list[str]:
 
     recovered: list[str] = []
     turns = re.split(
-        r"(?=\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*)",
+        r"(?=" + transcript_view.MARKER + r")",
         transcript,
         flags=re.IGNORECASE,
     )
@@ -4024,8 +4069,9 @@ def _reconcile_meeting_memory(
     )
 
     reconciled_questions = []
-    for question in _normalize_open_questions(
-        [str(question) for question in memory.get("open_questions", [])]
+    for question in _normalize_open_questions_keeping_verified(
+        [str(question) for question in memory.get("open_questions", [])],
+        verified_open_questions,
     ):
         if question in verified_open_questions:
             # v12 validated the source evidence and unresolved-at-end state before
@@ -4038,7 +4084,8 @@ def _reconcile_meeting_memory(
         durable_question = _contextualize_open_question(question, transcript)
         if durable_question:
             reconciled_questions.append(durable_question)
-    memory["open_questions"] = _normalize_open_questions(reconciled_questions)
+    memory["open_questions"] = _normalize_open_questions_keeping_verified(
+        reconciled_questions, verified_open_questions)
     # On the v12 High Performance path, deterministic transcript recovery is a
     # final safety net even when the model happened to propose zero questions in
     # this run. These helpers require explicit unresolved language in the
@@ -4058,8 +4105,9 @@ def _reconcile_meeting_memory(
                 for existing in memory["open_questions"]
             ):
                 continue
-            memory["open_questions"] = _normalize_open_questions(
-                [*memory["open_questions"], recovered_question]
+            memory["open_questions"] = _normalize_open_questions_keeping_verified(
+                [*memory["open_questions"], recovered_question],
+                verified_open_questions,
             )
 
     reconciled_risks = []
@@ -4199,17 +4247,7 @@ def _transcript_channel_for_evidence(evidence: str, transcript: str) -> str | No
     index = transcript.find(evidence)
     if index < 0:
         return None
-    prefix = transcript[:index]
-    matches = list(
-        re.finditer(
-            r"\[\d{1,2}:\d{2}\]\s+\*\*(Mic|Remote)\*\*",
-            prefix,
-            flags=re.IGNORECASE,
-        )
-    )
-    if not matches:
-        return None
-    return matches[-1].group(1)
+    return transcript_view.speaker_before(transcript, index)
 
 
 def _explicit_commitment_fallbacks(chunk: str) -> list[dict]:
@@ -4220,19 +4258,7 @@ def _explicit_commitment_fallbacks(chunk: str) -> list[dict]:
     turn intentions or suggestions into commitments.
     """
 
-    marker = re.compile(
-        r"\[(?P<time>\d{1,2}:\d{2})\]\s+\*\*(?P<speaker>Mic|Remote)\*\*",
-        flags=re.IGNORECASE,
-    )
-    matches = list(marker.finditer(chunk))
-    spans: list[tuple[str, str]] = []
-    if matches:
-        for index, match in enumerate(matches):
-            start = match.end()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(chunk)
-            spans.append((match.group("speaker"), chunk[start:end]))
-    else:
-        spans.append(("Unknown", chunk))
+    spans = transcript_view.speaker_blocks(chunk)
 
     cue = re.compile(
         r"\b(?:"
@@ -4263,7 +4289,7 @@ def _explicit_commitment_fallbacks(chunk: str) -> list[dict]:
                 continue
             if not _commitment_action_is_self_contained(action):
                 continue
-            owner = SELF_NAME if speaker.casefold() == SELF_SPEAKER_LABEL.casefold() else "Unknown"
+            owner = transcript_view.owner_for_speaker(speaker) or "Unknown"
             recovered.append(
                 {
                     "owner": owner,
@@ -4693,9 +4719,12 @@ Transcript section:
                 chunk,
             )
 
-            if evidence_channel and evidence_channel.casefold() == SELF_SPEAKER_LABEL.casefold():
+            if evidence_channel and transcript_view.is_self_speaker(evidence_channel):
                 resolved_owner = SELF_NAME
-            elif evidence_channel and evidence_channel.casefold() == "remote":
+            elif evidence_channel and transcript_view.is_person_speaker(evidence_channel):
+                # A named person said it: it is theirs.
+                resolved_owner = evidence_channel.strip()
+            elif evidence_channel and evidence_channel.casefold() in {"remote", "unidentified"}:
                 # A Remote channel can contain several people. A model-provided
                 # person name is not enough to prove which remote participant
                 # uttered a first-person commitment. Preserve the action while
@@ -5092,30 +5121,7 @@ def _transcript_turn_records(transcript: str) -> list[dict]:
     a polished sentence and searching for support afterward.
     """
 
-    pattern = re.compile(
-        r"(?ms)^\[(?P<time>\d{1,2}:\d{2})\]\s+\*\*(?P<speaker>[^*]+)\*\*\s*\n+"
-        r"(?P<body>.*?)(?=^\[\d{1,2}:\d{2}\]\s+\*\*|\Z)"
-    )
-    turns: list[dict] = []
-    for match in pattern.finditer(str(transcript or "")):
-        body = match.group("body").strip()
-        if not body:
-            continue
-        turns.append({
-            "time": match.group("time"),
-            "speaker": match.group("speaker").strip(),
-            "body": body,
-            # Preserve both the exact body span and the complete turn span.  A
-            # lexically grounded quote may begin inside the timestamp/header
-            # (for example ``07:37] **Remote**`` after punctuation-normalized
-            # matching), so speaker attribution must be able to resolve either
-            # representation without guessing from nearby text.
-            "start": match.start("body"),
-            "end": match.end("body"),
-            "turn_start": match.start(),
-            "turn_end": match.end(),
-        })
-    return turns
+    return transcript_view.turn_records(transcript)
 
 
 def _meeting_participant_identity_map(meeting_label: str, transcript: str) -> dict[str, str]:
@@ -5303,32 +5309,16 @@ def _speaker_channel_for_evidence(evidence: str, transcript: str) -> str:
     if not evidence:
         return ""
 
-    header = re.search(
-        r"(?:^|\n)\[?\d{1,2}:\d{2}\]\s+\*\*([^*]+)\*\*",
-        evidence,
-        flags=re.MULTILINE,
-    )
-    if header:
-        return header.group(1).strip()
+    header_speaker = transcript_view.speaker_in_header(evidence)
+    if header_speaker:
+        return header_speaker
 
     pos = transcript.find(evidence)
     if pos < 0:
         return ""
 
-    # Prefer the nearest preceding timestamp/speaker header.  This remains
-    # reliable even for legacy/synthetic transcripts that do not place every
-    # timestamp at the beginning of a new line.
-    preceding = list(re.finditer(
-        r"\[\d{1,2}:\d{2}\]\s+\*\*([^*]+)\*\*",
-        transcript[:pos + 1],
-    ))
-    if preceding:
-        return preceding[-1].group(1).strip()
-
-    for turn in _transcript_turn_records(transcript):
-        if turn.get("turn_start", turn["start"]) <= pos < turn.get("turn_end", turn["end"]):
-            return turn["speaker"]
-    return ""
+    # The nearest preceding header, else the turn containing the slice.
+    return transcript_view.speaker_at(transcript, pos)
 
 
 def _authoritative_first_person_owner(
@@ -6042,10 +6032,13 @@ def _resolved_question_is_well_formed(question: str) -> bool:
     if _is_well_formed_question(question):
         return True
     text = str(question or "").strip()
-    if not text.endswith("?"):
+    # An open question may be written as "Whether the vendor will ...": a plain
+    # statement of what is still unknown, with no question mark.
+    is_whether_form = bool(re.match(r"^whether\s", text, re.IGNORECASE)) and "?" not in text
+    if not text.endswith("?") and not is_whether_form:
         return False
     if re.search(
-        r"\[\d{1,2}:\d{2}\]|\*\*(?:Mic|Remote)\*\*|"
+        r"\[\d{1,2}:\d{2}\]|" + transcript_view.BOLD_SPEAKER + "|"
         r"\((?:static|indistinct|inaudible|unintelligible|crosstalk)[^)]*\)",
         text,
         flags=re.IGNORECASE,
@@ -6055,6 +6048,8 @@ def _resolved_question_is_well_formed(question: str) -> bool:
     if len(words) < 4 or len(words) > 30:
         return False
     first = words[0].casefold()
+    if is_whether_form:
+        return True
     if first not in {
         "who", "what", "when", "where", "why", "how", "which",
         "is", "are", "was", "were", "do", "does", "did", "can",
@@ -6101,6 +6096,13 @@ _LATE_ANSWER_CUE_PATTERN = re.compile(
 )
 
 
+_QUESTION_PARKED_PATTERN = re.compile(
+    r"\b(?:follow[-\s]?up|take\s+that\s+as|circle\s+back|"
+    r"get\s+back\s+to\s+(?:you|us|them)|parking\s+lot)\b",
+    flags=re.IGNORECASE,
+)
+
+
 def _question_is_answered_later(
     question: str,
     evidence_quotes: list[str],
@@ -6138,6 +6140,15 @@ def _question_is_answered_later(
     tail = transcript[evidence_end : min(len(transcript), evidence_end + 14000)]
     if not tail:
         return False
+    # A question the asker parks ("I'll take that as a follow up") is still open.
+    if _QUESTION_PARKED_PATTERN.search(transcript[evidence_end : evidence_end + 300]):
+        return False
+    # Nobody answers their own question: when the asker is a known person (or
+    # the user), turns by that same speaker cannot close it.
+    asker = transcript_view.speaker_at(transcript, start)
+    asker_is_known = bool(asker) and (
+        transcript_view.is_self_speaker(asker) or transcript_view.is_person_speaker(asker)
+    )
 
     anchor_text = " ".join([question, *evidence_quotes])
     anchors = {
@@ -6155,7 +6166,7 @@ def _question_is_answered_later(
         entity_tokens.update(_commitment_content_tokens(entity))
 
     turns = re.split(
-        r"(?=\[\d{1,2}:\d{2}\]\s+\*\*(?:Mic|Remote)\*\*)",
+        r"(?=" + transcript_view.MARKER + r")",
         tail,
         flags=re.IGNORECASE,
     )
@@ -6163,6 +6174,10 @@ def _question_is_answered_later(
         compact = re.sub(r"\s+", " ", turn).strip()
         if not compact:
             continue
+        if asker_is_known:
+            header = transcript_view.HEADER.match(turn.lstrip())
+            if header and header.group("speaker").strip() == asker:
+                continue
         # A turn dominated by explicit uncertainty is not an answer.
         if _STRONG_UNRESOLVED_CONTEXT_PATTERN.search(compact[:320]):
             continue
@@ -6477,6 +6492,15 @@ def _diagnose_resolved_rejection(category: str, item: dict, transcript: str) -> 
                 for evidence in quotes
             ):
                 reason = "question_already_answered"
+            elif _question_is_answered_later(question, quotes, transcript):
+                # The real check (_validate_resolved_question) also closes a
+                # question when a later turn seems to answer it.
+                reason = "question_answered_later"
+            elif re.match(r"^why\b", question, re.I) and not re.search(
+                r"\b(?:why|what(?:'s| is) the reason|don't know why|not sure why|"
+                r"can't explain why|unclear why)\b", " ".join(quotes), re.I,
+            ):
+                reason = "question_why_without_cause"
             else:
                 reason = "unknown_validator_rejection"
 
@@ -8336,10 +8360,22 @@ def build_complete_meeting_memory(
     reconciled = run_closed_topic_check(
         meeting_label, transcript, reconciled, ask_llm, _split_chunk_for_retry,
         trace=_trace_memory_stage)
-    from next_steps_pass import run_next_steps_pass
-    reconciled = run_next_steps_pass(
-        meeting_label, transcript, reconciled, ask_llm, _split_chunk_for_retry, SELF_NAME,
-        trace=_trace_memory_stage)
+    import config as _config
+    names_pass_done = False
+    if getattr(_config, "NAMED_TRANSCRIPT", False):
+        from action_items_pass import run_action_items_pass
+        reconciled, names_pass_done = run_action_items_pass(
+            meeting_label, transcript, reconciled, ask_llm, _split_chunk_for_retry, SELF_NAME,
+            trace=_trace_memory_stage)
+        from signals_pass import run_signals_pass
+        reconciled, _signals_done = run_signals_pass(
+            meeting_label, transcript, reconciled, ask_llm, SELF_NAME,
+            trace=_trace_memory_stage)
+    if not names_pass_done:
+        from next_steps_pass import run_next_steps_pass
+        reconciled = run_next_steps_pass(
+            meeting_label, transcript, reconciled, ask_llm, _split_chunk_for_retry, SELF_NAME,
+            trace=_trace_memory_stage)
     from memory_reconciliation import scrub_channel_labels
     reconciled = scrub_channel_labels(reconciled, SELF_NAME)
     # Provenance is used only while reconciling/hardening; never persist it.
@@ -8412,6 +8448,13 @@ def _normalize_generated_bullet_sections(summary: str) -> str:
     return section_pattern.sub(fix_section, summary)
 
 
+def _with_unconfirmed(body: str, others, label: str) -> str:
+    lines = [f"- {str(line).strip()}" for line in others or [] if str(line).strip()]
+    if not lines:
+        return body
+    return body + f"\n\n**{label}**\n\n" + "\n".join(lines)
+
+
 def compose_summary_with_meeting_memory(
     meeting_summary: str,
     memory: dict,
@@ -8437,7 +8480,8 @@ def compose_summary_with_meeting_memory(
         owner = str(item.get("owner", "")).strip() or "Owner not identified"
         if owner == "Unknown":
             owner = "Owner not identified"
-        line = f"- {owner} - {action} - Due date not identified"
+        due = str(item.get("due", "") or "").strip()
+        line = f"- {owner} - {action} - " + (f"Due: {due}" if due else "Due date not identified")
         if line not in action_lines:
             action_lines.append(line)
 
@@ -8486,22 +8530,33 @@ def compose_summary_with_meeting_memory(
     composed = _replace_markdown_section(
         composed,
         "Decisions",
-        "\n".join(decision_lines) or "None identified.",
+        _with_unconfirmed("\n".join(decision_lines) or "None identified.",
+                          memory.get("other_decisions"), "Possible decisions (unconfirmed)"),
     )
+    action_body = "\n".join(action_lines) or "None identified."
+    other_lines = [
+        f"- {str(line).strip()}"
+        for line in memory.get("other_next_steps", []) or []
+        if str(line).strip()
+    ]
+    if other_lines:
+        action_body += "\n\n**Other next steps mentioned (unconfirmed)**\n\n" + "\n".join(other_lines)
     composed = _replace_markdown_section(
         composed,
         "Action Items",
-        "\n".join(action_lines) or "None identified.",
+        action_body,
     )
     composed = _replace_markdown_section(
         composed,
         "Risks and Concerns",
-        "\n".join(risk_lines) or "None identified.",
+        _with_unconfirmed("\n".join(risk_lines) or "None identified.",
+                          memory.get("other_risks"), "Possible risks (unconfirmed)"),
     )
     composed = _replace_markdown_section(
         composed,
         "Open Questions",
-        "\n".join(question_lines) or "None identified.",
+        _with_unconfirmed("\n".join(question_lines) or "None identified.",
+                          memory.get("other_questions"), "Possible open questions (unconfirmed)"),
     )
     composed = _replace_markdown_section(
         composed,
@@ -8984,7 +9039,7 @@ def is_self_reference_window(
     current_speaker = None
 
     speaker_pattern = re.compile(
-        r"\*\*(Mic|Remote)\*\*",
+        r"\*\*(" + transcript_view.SPEAKER + r")\*\*",
         flags=re.IGNORECASE,
     )
 

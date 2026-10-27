@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 import re
 
+import transcript_view
+
 # Shared by the stage-2 risk checker (ai.py) and the final audit below.
 # Matches word stems, so "concerned", "worried", "errors" all count.
 RISK_CUE_PATTERN = re.compile(
@@ -37,6 +39,23 @@ def _tokens(value):
     return {w for w in norm(value).split() if len(w)>2 and w not in STOP}
 
 
+def stem_word(word):
+    """A rough root so "reply", "replying" and "replied" count as one word.
+
+    Plurals as before; also -ing / -ed endings and a trailing y (reply/replies).
+    """
+    word = str(word)
+    if len(word) > 5 and word.endswith("ing"):
+        word = word[:-3]
+    elif len(word) > 4 and word.endswith("ed"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s"):
+        word = word[:-1]
+    if len(word) > 3 and word.endswith("y"):
+        word = word[:-1] + "i"
+    return word
+
+
 def near_duplicate(words, others, threshold=0.6, jaccard=None):
     """True when `words` mostly repeats any set in `others`.
 
@@ -47,8 +66,7 @@ def near_duplicate(words, others, threshold=0.6, jaccard=None):
     """
     jaccard = threshold if jaccard is None else jaccard
 
-    def stem(word):
-        return word[:-1] if len(word) > 3 and word.endswith("s") else word
+    stem = stem_word
 
     mine = {stem(w) for w in words or ()}
     for other in others:
@@ -437,13 +455,13 @@ def narrow_commitment_evidence(memory):
         if not isinstance(item, dict) or norm(item.get('owner', '')) != _self_owner_key():
             continue
         ev = str(item.get('evidence', ''))
-        pattern = r'\[\d\d:\d\d:\d\d\]\s*\*\*(Mic|Remote)\*\*'
+        pattern = r'\[\d\d:\d\d:\d\d\]\s*\*\*(' + transcript_view.SPEAKER + r')\*\*'
         matches = list(re.finditer(pattern, ev, re.I))
         if not matches:
             continue
         mic_turns = []
         for i, match in enumerate(matches):
-            if match.group(1).casefold() != 'mic':
+            if not transcript_view.is_self_speaker(match.group(1)):
                 continue
             end = matches[i + 1].start() if i + 1 < len(matches) else len(ev)
             turn = re.sub(r'\s+', ' ', ev[match.end():end]).strip()
@@ -678,9 +696,13 @@ def recover_supported_missed_work(memory, ledger, transcript):
         return memory
     # Only quote from an explicitly labelled Mic turn. Remote interruptions
     # split the turn; do not infer speaker identity from conversation title.
-    mic_turns = re.findall(
-        r'\*\*Mic\*\*\s*(.*?)(?=\[\d{2}:\d{2}(?::\d{2})?\]\s*\*\*(?:Remote|Mic)\*\*|$)',
-        transcript, re.I | re.S)
+    mic_turns = [
+        found.group(2) for found in re.finditer(
+            r'\*\*(' + transcript_view.SPEAKER + r')\*\*\s*(.*?)'
+            r'(?=\[\d{2}:\d{2}(?::\d{2})?\]\s*\*\*' + transcript_view.SPEAKER + r'\*\*|$)',
+            transcript, re.I | re.S)
+        if transcript_view.is_self_speaker(found.group(1))
+    ]
     for row in ledger:
         if not isinstance(row, dict):
             continue
@@ -719,7 +741,8 @@ def recover_supported_missed_work(memory, ledger, transcript):
                     # 'and talk to her'. Require a Mic-labelled precursor
                     # immediately before the interruption (<= 300 chars).
                     preceding = transcript[max(0,idx-400):idx]
-                    if not re.search(r'\*\*Mic\*\*[^\n]{0,100}\bi[\'’]ll try\b(?:(?!\*\*Mic\*\*).){0,250}$', preceding, re.I | re.S):
+                    self_marker = transcript_view.self_marker_pattern()
+                    if not re.search(self_marker + r'[^\n]{0,100}\bi[\'’]ll try\b(?:(?!' + self_marker + r').){0,250}$', preceding, re.I | re.S):
                         continue
                 commitments.append({'owner': row['owner'], 'action': sub,
                                     'status': 'open', 'evidence': quote})
@@ -1105,9 +1128,9 @@ def recover_audited_omissions(memory, ledger, transcript):
     commitments = result.get('commitments', [])
     if isinstance(commitments, list) and isinstance(transcript, str):
         # Each segment is bounded by the next labelled speaker turn.
-        turn_re = re.compile(r'\[\d{2}:\d{2}(?::\d{2})?\]\s*\*\*(Mic|Remote)\*\*',re.I)
+        turn_re = re.compile(r'\[\d{2}:\d{2}(?::\d{2})?\]\s*\*\*(' + transcript_view.SPEAKER + r')\*\*',re.I)
         matches = list(turn_re.finditer(transcript))
-        turns = [(m.group(1).lower(), transcript[m.end():(matches[i+1].start() if i+1<len(matches) else len(transcript))].strip(), m.start()) for i,m in enumerate(matches)]
+        turns = [('mic' if transcript_view.is_self_speaker(m.group(1)) else 'remote', transcript[m.end():(matches[i+1].start() if i+1<len(matches) else len(transcript))].strip(), m.start()) for i,m in enumerate(matches)]
         for i, (speaker, body, pos) in enumerate(turns):
             if speaker != 'mic':
                 continue

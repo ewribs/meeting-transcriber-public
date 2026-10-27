@@ -36,6 +36,7 @@ DEFAULT_SETTINGS = {
     "voice_update_participants": True,
     "voice_pending_days": 180,
     "voice_python": "",
+    "named_transcript": False,
 }
 
 

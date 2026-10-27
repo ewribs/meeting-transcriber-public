@@ -157,6 +157,9 @@ def meeting_detail_payload(run: str) -> dict[str, Any]:
             "summary": _clean_text(
                 detail.get("summary")
             ),
+            "transcript": _clean_text(
+                detail.get("transcript")
+            ),
             "topics": detail.get("topics", []),
             "decisions": detail.get("decisions", []),
             "commitments": detail.get("commitments", []),

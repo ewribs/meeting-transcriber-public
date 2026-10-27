@@ -331,6 +331,7 @@ def identify_voices(
     name_gap: float = NAME_GAP,
     same_voice: float = SAME_VOICE_SCORE,
     min_seconds: float = MIN_VOICE_SECONDS,
+    group: bool = True,
 ) -> list[VoiceResult]:
     """Decide which voices in one meeting belong to known people.
 
@@ -371,7 +372,7 @@ def identify_voices(
     # A voice that sounds like a named voice takes the same name, unless it
     # is close to voices named as two different people.
     for result in results:
-        if result.status != "unknown" or not result.same_as:
+        if not group or result.status != "unknown" or not result.same_as:
             continue
         owners = {
             by_id[o].person_id for o in result.same_as

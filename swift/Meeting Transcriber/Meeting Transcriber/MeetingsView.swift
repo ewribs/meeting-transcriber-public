@@ -14,6 +14,7 @@ struct MeetingsView: View {
         Identifiable
     {
         case meeting = "Meeting"
+        case transcript = "Transcript"
         case context = "Ask"
         case changes = "Changes"
 

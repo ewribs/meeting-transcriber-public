@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from preflight import run_preflight
-from voice_auto import run_voice_step
+from voice_auto import finish_participants, run_early_voice_step, run_voice_step
 from app_settings import load_app_settings
 
 from datetime import datetime
@@ -37,6 +37,9 @@ from formatter import (
     format_transcript,
     format_transcript_html,
 )
+
+import config
+import transcript_turns
 
 from pipeline import (
     run_ai_cleanup,
@@ -522,6 +525,9 @@ def transcribe_meeting(
 
     formatted_transcript = format_transcript(final_entries)
 
+    # Keep the same transcript as data too (never blocks transcription).
+    transcript_turns.save_turns_safely(run_dir, final_entries)
+
     markdown_path = run_dir / "meeting_transcript.md"
     markdown_path.write_text(
         formatted_transcript,
@@ -530,6 +536,23 @@ def transcribe_meeting(
 
     print()
     print(f"Transcript saved: {markdown_path}")
+
+    # With names switched on, voices are identified first so that the cleaning
+    # and extraction steps can use people's names.
+    early_voice_status = None
+    if getattr(config, "NAMED_TRANSCRIPT", False):
+        _report_progress(
+            progress_callback,
+            "Recognizing voices...",
+            66,
+        )
+        early_voice_status = run_early_voice_step(
+            run_dir,
+            meeting_path,
+            load_app_settings(),
+            archive_dir=ARCHIVE_DIR,
+        )
+        print(f"Voice recognition (before cleaning): {early_voice_status}")
 
     _report_progress(
         progress_callback,
@@ -574,12 +597,16 @@ def transcribe_meeting(
         "Recognizing voices...",
         98,
     )
-    voice_status = run_voice_step(
-        run_dir,
-        meeting_path,
-        load_app_settings(),
-        archive_dir=ARCHIVE_DIR,
-    )
+    if early_voice_status and early_voice_status.startswith("done"):
+        voice_status = early_voice_status + finish_participants(
+            run_dir, load_app_settings(), ARCHIVE_DIR)
+    else:
+        voice_status = run_voice_step(
+            run_dir,
+            meeting_path,
+            load_app_settings(),
+            archive_dir=ARCHIVE_DIR,
+        )
     if voice_status != "off":
         print(f"Voice recognition: {voice_status}")
 

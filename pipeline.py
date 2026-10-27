@@ -35,6 +35,7 @@ from metadata import (
     update_meeting_participants,
 )
 
+import config
 import json
 import markdown
 
@@ -79,6 +80,39 @@ def write_html_outputs(
     return transcript_html_path, summary_html_path
 
 
+def named_transcript_for_run(run_dir: Path) -> str | None:
+    """The transcript with people's names, when that is switched on and the
+    meeting has voice information. None means: use the usual transcript."""
+    if not getattr(config, "NAMED_TRANSCRIPT", False):
+        return None
+    try:
+        import transcript_names
+        text, _counts = transcript_names.build_named_transcript(
+            Path(run_dir), config.SELF_NAME)
+        return text
+    except Exception as error:      # noqa: BLE001 - fall back to the usual transcript
+        print(f"Note: names not added to the transcript ({error}).")
+        return None
+
+
+def named_cleaned_transcript(run_dir: Path) -> str | None:
+    """The cleaned transcript made turn by turn with names, when switched on
+    and possible. None means: clean the usual way."""
+    if not getattr(config, "NAMED_TRANSCRIPT", False):
+        return None
+    try:
+        import structured_cleaning
+        import transcript_turns
+        from ai import ask_llm
+        turns = transcript_turns.named_turns_from_run(Path(run_dir))
+        structured_cleaning.clean_turns(turns, ask_llm)
+        return transcript_turns.render_named_markdown(
+            turns, config.SELF_NAME, field="text")
+    except Exception as error:      # noqa: BLE001 - fall back to the usual cleaning
+        print(f"Note: turn-by-turn cleaning not used ({error}).")
+        return None
+
+
 def run_ai_cleanup(
     run_dir: Path,
     transcript: str | None = None,
@@ -97,6 +131,10 @@ def run_ai_cleanup(
 
     transcript_path = run_dir / "meeting_transcript.md"
 
+    named = named_transcript_for_run(run_dir)
+    if named is not None:
+        transcript = named
+
     if transcript is None:
         if not transcript_path.exists():
             raise FileNotFoundError(
@@ -107,9 +145,11 @@ def run_ai_cleanup(
             encoding="utf-8",
         )
 
-    cleaned_transcript = clean_transcript_in_chunks(
-        transcript,
-    )
+    cleaned_transcript = named_cleaned_transcript(run_dir)
+    if cleaned_transcript is None:
+        cleaned_transcript = clean_transcript_in_chunks(
+            transcript,
+        )
 
     cleaned_path = (
         run_dir / "meeting_transcript_cleaned.md"

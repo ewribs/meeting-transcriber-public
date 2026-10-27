@@ -16,7 +16,7 @@ extension MeetingsView {
             .pickerStyle(.segmented)
             .labelsHidden()
             .id(visibleWorkspaceTabs.count)
-            .frame(maxWidth: 380)
+            .frame(maxWidth: 480)
             .padding(.horizontal, 24)
             .padding(.vertical, 10)
 
@@ -26,6 +26,9 @@ extension MeetingsView {
                 switch selectedWorkspaceTab {
                 case .meeting:
                     meetingWorkspace
+
+                case .transcript:
+                    transcriptWorkspace
 
                 case .context:
                     contextWorkspace
@@ -61,6 +64,70 @@ extension MeetingsView {
             SessionChangesPanel(session: session)
         } else {
             meetingWorkspace
+        }
+    }
+
+    /// The cleaned transcript with each speaker's name, read-only.
+    @ViewBuilder
+    var transcriptWorkspace: some View {
+        if let meeting = selectedMeeting {
+            VStack(spacing: 0) {
+                meetingHeader(meeting)
+
+                Divider()
+
+                if isLoadingDetail {
+                    ProgressView("Loading transcript…")
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity
+                        )
+                } else if let text = meetingDetail?.transcript,
+                          !text.isEmpty {
+                    ScrollView {
+                        MeetingMarkdownView(markdown: text)
+                            .frame(
+                                maxWidth: .infinity,
+                                alignment: .leading
+                            )
+                            .padding(24)
+                    }
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No transcript",
+                        systemImage: "text.alignleft",
+                        description: Text(
+                            "This meeting has no saved transcript."
+                        )
+                    )
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity
+                    )
+                }
+            }
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: .topLeading
+            )
+        } else {
+            ContentUnavailableView(
+                "Select a meeting",
+                systemImage: "list.bullet.rectangle",
+                description: Text(
+                    "Choose a meeting from the list to view its transcript."
+                )
+            )
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity
+            )
         }
     }
 

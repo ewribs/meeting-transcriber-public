@@ -116,6 +116,7 @@ nonisolated struct MeetingDetail: Decodable, Sendable {
     let schemaVersion: Int
     let run: String
     let summary: String
+    let transcript: String?
     let topics: [MeetingTopic]
     let decisions: [String]
     let commitments: [MeetingCommitment]
@@ -130,6 +131,7 @@ nonisolated struct MeetingDetail: Decodable, Sendable {
         case schemaVersion = "schema_version"
         case run
         case summary
+        case transcript
         case topics
         case decisions
         case commitments

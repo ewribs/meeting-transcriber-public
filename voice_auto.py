@@ -88,7 +88,8 @@ def _run_voice_step(
         if not payload.get("remote_silent"):
             vs.save_pending(Path(run_dir).name, payload, pending_dir)
         if payload.get("remote_silent"):
-            return "done: remote audio was not captured"
+            return _mic_track_step(
+                run_dir, analyzer, store, pending_dir, archive_dir)
         voices = document.get("voices", [])
         named = sum(1 for v in voices if v.get("person"))
         status = f"done: {named} of {len(voices)} voices named"
@@ -100,6 +101,30 @@ def _run_voice_step(
         if isinstance(error, (KeyboardInterrupt, SystemExit)):
             raise
         return f"skipped: {error}"
+
+
+def _mic_track_step(run_dir, analyzer, store, pending_dir, archive_dir) -> str:
+    """The remote track was silent, so everyone is on the mic track (a
+    speakerphone call, say). Analyse that track instead. Voices are only
+    named by a direct match: look-alike voices are never grouped, because
+    on one microphone different people blend together. Never raises."""
+    base = "done: remote audio was not captured"
+    try:
+        mic = Path(run_dir) / "audio" / "mic.wav"
+        if not mic.exists():
+            return base
+        payload = analyzer(mic)
+        document = vs.build_speakers_document(payload, store, group=False)
+        document["track"] = "mic"
+        document = vs.keep_confirmations(vs.read_speakers(run_dir), document)
+        vs.write_speakers(run_dir, document)
+        vs.mirror_speakers(run_dir, archive_dir)
+        vs.save_pending(Path(run_dir).name, payload, pending_dir)
+        voices = document.get("voices", [])
+        named = sum(1 for v in voices if v.get("person"))
+        return f"{base}; mic track: {named} of {len(voices)} voices named"
+    except Exception as error:      # noqa: BLE001 - never fail a transcription
+        return f"{base}; mic track not analysed ({error})"
 
 
 def _mark_static(audio_path, document: dict) -> None:
@@ -144,6 +169,40 @@ def run_voice_step(
         _prune_saved_fingerprints(
             settings, kwargs.get("pending_dir", vs.PENDING_DIR))
     return status
+
+
+def run_early_voice_step(
+    run_dir: Path,
+    audio_path: Path | None,
+    settings: dict,
+    **kwargs,
+) -> str:
+    """Identify voices before the transcript is cleaned, so the cleaning and
+    extraction steps can use people's names.
+
+    The participant list is not touched here: the meeting's metadata does not
+    exist yet. finish_participants() does that at the end.
+    """
+    return run_voice_step(
+        run_dir, audio_path,
+        {**settings, "voice_update_participants": False},
+        **kwargs)
+
+
+def finish_participants(run_dir: Path, settings: dict, archive_dir: Path | None = None,
+                        store_path: Path = vs.STORE_PATH) -> str:
+    """After an early voice step: update the participant list from the saved
+    voices, without analysing the audio again. Returns a status suffix."""
+    try:
+        if not settings.get("voice_update_participants", True):
+            return ""
+        document = vs.read_speakers(run_dir)
+        if document is None:
+            return ""
+        store = vp.VoiceStore.load(store_path)
+        return _update_participants(run_dir, document, store, archive_dir)
+    except Exception as error:      # noqa: BLE001 - never fail a transcription
+        return f", participants not updated ({error})"
 
 
 def _prune_saved_fingerprints(settings: dict, pending_dir: Path) -> None:

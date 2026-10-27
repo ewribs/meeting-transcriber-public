@@ -222,6 +222,21 @@ class IdentifyTests(unittest.TestCase):
         self.assertEqual(results["frag"].person_id, "person-a")
         self.assertEqual(results["frag"].via, "grouped")
 
+    def test_grouping_can_be_turned_off(self):
+        closeness = 0.72
+        orthogonal = vp.normalize(
+            [c - sum(x * y for x, y in zip(PERSON_C, PERSON_A)) * a
+             for c, a in zip(PERSON_C, PERSON_A)]
+        )
+        base = vp.normalize(
+            [closeness * a + math.sqrt(1 - closeness ** 2) * o
+             for a, o in zip(PERSON_A, orthogonal)]
+        )
+        voices = [voice("solid", PERSON_A, seed=4), voice("frag", base, seed=3)]
+        results = self.by_id(vp.identify_voices(voices, self.store, group=False))
+        self.assertEqual(results["solid"].via, "match")
+        self.assertEqual(results["frag"].status, "unknown")
+
     def test_fragment_near_two_different_people_is_not_grouped(self):
         voices = [voice("a", PERSON_A), voice("b", PERSON_B)]
         blend = vp.normalize([a + b for a, b in zip(PERSON_A, PERSON_B)])
@@ -352,3 +367,4 @@ class RemoveMatchingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

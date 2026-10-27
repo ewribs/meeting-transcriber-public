@@ -16,6 +16,8 @@ import json
 import os
 import re
 
+import transcript_view
+
 from chunking import chunk_transcript
 
 _SCHEMA = {
@@ -41,15 +43,37 @@ _SCHEMA = {
 }
 
 
+_LEGACY_LABELS = (
+    'Speaker labels: "Mic" is the user ({self_name}). "Remote" is one or more other people\n'
+    'on the call; their individual names are not given by the label.\n')
+_LEGACY_OWNER = (
+    "- owner: the person's name only if the transcript names who will do it. If the speaker is\n"
+    '  "Mic", use {self_name}. Otherwise write "Unknown". Never guess a name.\n')
+_NAMED_LABELS = (
+    'Speaker labels: each turn is headed by the speaker\'s name. {self_name} is the user.\n'
+    '"Unidentified" means the voice could not be matched to a person.\n')
+_NAMED_OWNER = (
+    "- owner: the person who will do it. When someone commits to something themselves (\"I'll...\"),\n"
+    "  the owner is the name on that turn. When someone is asked to do it and agrees, the owner is\n"
+    "  the person who agreed. If the turn is headed \"Unidentified\" and no name is spoken, write\n"
+    '  "Unknown". Never guess a name.\n')
+
+
+def _uses_names(chunk: str) -> bool:
+    return any(transcript_view.is_person_speaker(speaker)
+               for speaker in transcript_view.speakers_in(chunk))
+
+
 def _prompt(meeting_label: str, chunk: str, self_name: str) -> str:
+    named = _uses_names(chunk)
+    labels_note = (_NAMED_LABELS if named else _LEGACY_LABELS).format(self_name=self_name)
+    owner_rule = (_NAMED_OWNER if named else _LEGACY_OWNER).format(self_name=self_name)
     return f"""
 You are listing the explicit next steps from one section of a business meeting transcript.
 
 Meeting: {meeting_label}
 
-Speaker labels: "Mic" is the user ({self_name}). "Remote" is one or more other people
-on the call; their individual names are not given by the label.
-
+{labels_note}
 A next step is something a participant says they WILL do, agrees to do, accepts when
 asked, or that the group clearly commits to do in the future. A request that the other
 person accepts also counts (for example "send me an email tomorrow" followed by agreement).
@@ -67,9 +91,7 @@ Do NOT list:
 - a speaker only worrying about, or wanting, something, without saying they will do it
 
 For each next step give:
-- owner: the person's name only if the transcript names who will do it. If the speaker is
-  "Mic", use {self_name}. Otherwise write "Unknown". Never guess a name.
-- task: one concise, self-contained sentence starting with a verb.
+{owner_rule}- task: one concise, self-contained sentence starting with a verb.
 - evidence: an exact quote copied from the transcript (the shortest span that shows the
   commitment). Do not paraphrase the quote.
 
@@ -90,7 +112,7 @@ def _clean_owner(owner: str, self_name: str) -> str:
     folded = owner.casefold()
     if folded == "mic":
         return self_name
-    if folded in ("", "remote", "unknown", "unclear", "none", "n/a"):
+    if folded in ("", "remote", "unknown", "unidentified", "unclear", "none", "n/a"):
         return ""
     return owner
 
@@ -154,7 +176,7 @@ def extract_next_steps(transcript, meeting_label, ask_llm, self_name,
             # An item can only be the user's if the quote came from the user's own turn.
             if owner == self_name:
                 speaker = _speaker_of(chunk, evidence)
-                if speaker is not None and speaker.casefold() != "mic":
+                if speaker is not None and not transcript_view.is_self_speaker(speaker):
                     owner = ""
             found.append({
                 "owner": owner,

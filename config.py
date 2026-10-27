@@ -105,6 +105,16 @@ MLX_MAX_TOKENS = int(
     _APP_SETTINGS.get("mlx_max_tokens")
     or 8000
 )
+# Experimental (v2.5): give the AI steps a transcript with people's names
+# instead of "Mic" / "Remote". Off unless MT_NAMED_TRANSCRIPT=1 or the
+# "named_transcript" setting is true. MT_NAMED_TRANSCRIPT=0 forces it off
+# (the test suite uses this so results do not depend on personal settings).
+_NAMED_ENV = str(os.environ.get("MT_NAMED_TRANSCRIPT") or "").strip().lower()
+NAMED_TRANSCRIPT = (
+    False if _NAMED_ENV in {"0", "false", "no", "off"}
+    else _NAMED_ENV in {"1", "true", "yes", "on"}
+    or _APP_SETTINGS.get("named_transcript") is True
+)
 LLM_MODEL = str(
     os.environ.get("MT_LLM_MODEL")
     or _APP_SETTINGS.get("llm_model")

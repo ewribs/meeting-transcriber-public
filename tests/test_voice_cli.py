@@ -193,6 +193,92 @@ class MeetingTests(CliTestCase):
         self.assertIn("Jordan  (confirmed by you)", out)
         self.assertNotIn("may be", out)
 
+    def test_mic_probe_shows_voices_and_saves_nothing(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        self.payloads["mic.wav"] = payload(
+            voice("SPEAKER_00", ALEX, 200), voice("SPEAKER_01", STRANGER, 90, seed=3))
+        code, out = self.run_cli("mic-probe", self.run_name)
+        self.assertEqual(code, 0)
+        self.assertIn("MIC TRACK ONLY", out)
+        self.assertIn("Alex  (matched)", out)
+        self.assertFalse((self.run_dir / "speakers.json").exists())
+
+    def test_mic_probe_shows_what_each_voice_said(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        (self.run_dir / "transcript").mkdir()
+        (self.run_dir / "transcript" / "mic.vtt").write_text(
+            "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\n hello from the first voice\n\n"
+            "00:00:11.000 --> 00:00:15.000\n hello from the second voice\n",
+            encoding="utf-8")
+        result = payload(voice("SPEAKER_00", ALEX, 200), voice("SPEAKER_01", STRANGER, 90, seed=3))
+        result["voices"][0]["turns"] = [[0.0, 6.0]]
+        result["voices"][1]["turns"] = [[10.0, 16.0]]
+        self.payloads["mic.wav"] = result
+        code, out = self.run_cli("mic-probe", self.run_name)
+        self.assertEqual(code, 0)
+        self.assertIn("What each voice said", out)
+        self.assertIn("hello from the first voice", out)
+        self.assertIn("hello from the second voice", out)
+
+    def test_mic_probe_can_save_clips(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        result = payload(voice("SPEAKER_00", ALEX, 200), voice("SPEAKER_01", STRANGER, 90, seed=3))
+        result["voices"][0]["turns"] = [[0.0, 40.0]]
+        result["voices"][1]["turns"] = [[50.0, 90.0]]
+        self.payloads["mic.wav"] = result
+        made = []
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = voice_cli.main(
+                ["mic-probe", self.run_name, "--clips", "--out", str(self.root / "clips")],
+                worker=self.worker, voices_dir=self.voices,
+                dirs=(self.output, self.meetings, self.archive),
+                clipper=lambda audio, start, length, path: made.append((audio.name, path.name)))
+        self.assertEqual(code, 0)
+        self.assertGreaterEqual(len(made), 2)
+        self.assertTrue(all(source == "mic.wav" for source, _ in made))
+        self.assertIn("micprobe_voice01_1.wav", [name for _, name in made])
+        self.assertIn("micprobe_voice00_1.wav", [name for _, name in made])
+        self.assertFalse((self.run_dir / "speakers.json").exists())
+
+    def test_mic_probe_expect_suggests_the_leftover_voice(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        self.payloads["mic.wav"] = payload(
+            voice("SPEAKER_00", ALEX, 200), voice("SPEAKER_01", STRANGER, 90, seed=3))
+        code, out = self.run_cli("mic-probe", self.run_name, "--save", "--expect", "Alex, Jordan")
+        self.assertEqual(code, 0)
+        self.assertIn("may be Jordan", out)
+        code, out = self.run_cli("confirm", self.run_name, "--accept-hint")
+        self.assertEqual(code, 0)
+        self.assertIn("Named voice 01 as Jordan", out)
+
+    def test_confirming_on_a_mic_track_names_only_that_voice(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        # Two voices that sound alike (a speakerphone), and a third.
+        self.payloads["mic.wav"] = payload(
+            voice("SPEAKER_00", STRANGER, 200, seed=3), voice("SPEAKER_01", STRANGER, 90, seed=4))
+        self.run_cli("mic-probe", self.run_name, "--save")
+        document = vs.read_speakers(self.run_dir)
+        self.assertTrue(any(v["same_as"] for v in document["voices"]))
+        self.run_cli("confirm", self.run_name, "Jordan", "--voice", "00")
+        named = {v["id"]: v["status"] for v in vs.read_speakers(self.run_dir)["voices"]}
+        self.assertEqual(named["SPEAKER_00"], "named")
+        self.assertNotEqual(named["SPEAKER_01"], "named")
+
+    def test_fresh_drops_earlier_confirmations(self):
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"")
+        self.payloads["mic.wav"] = payload(voice("SPEAKER_00", ALEX, 200))
+        self.run_cli("mic-probe", self.run_name, "--save")
+        self.run_cli("confirm", self.run_name, "Jordan", "--voice", "00")
+        self.run_cli("mic-probe", self.run_name, "--save", "--fresh")
+        voices = vs.read_speakers(self.run_dir)["voices"]
+        self.assertNotEqual(voices[0].get("via"), "user")
+
+    def test_mic_probe_without_a_mic_track(self):
+        code, out = self.run_cli("mic-probe", self.run_name)
+        self.assertEqual(code, 2)
+        self.assertIn("No mic track", out)
+
     def test_confirm_with_explicit_voice_and_name(self):
         self.run_cli("identify", self.run_name)
         code, out = self.run_cli("confirm", self.run_name, "Jordan", "--voice", "01")

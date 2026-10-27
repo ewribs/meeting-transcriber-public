@@ -205,6 +205,7 @@ def load_meeting_detail(meeting: dict[str, Any]) -> dict[str, Any]:
     if not location:
         return {
             "summary": "",
+            "transcript": "",
             "topics": [],
             "decisions": [],
             "commitments": [],
@@ -222,11 +223,13 @@ def load_meeting_detail(meeting: dict[str, Any]) -> dict[str, Any]:
     metadata_path = meeting_dir / "meeting_metadata.json"
 
     summary = _read_text(summary_path)
+    transcript = _read_text(meeting_dir / "meeting_transcript_cleaned.md")
     memory = _read_json_object(memory_path)
     metadata = _read_json_object(metadata_path)
 
     return {
         "summary": summary,
+        "transcript": transcript,
         "topics": _normalize_topics(memory),
         "decisions": _normalize_decisions(memory),
         "commitments": _normalize_commitments(memory),

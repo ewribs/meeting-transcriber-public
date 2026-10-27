@@ -112,6 +112,39 @@ class RunVoiceStepTests(unittest.TestCase):
                          "done: remote audio was not captured")
         self.assertFalse(self.pending.exists() and any(self.pending.iterdir()))
 
+    def mic_analyzer(self, calls):
+        def analyze(audio):
+            calls.append(Path(audio).name)
+            if Path(audio).name == "mic.wav":
+                # one clear match plus a look-alike fragment of the same voice
+                return payload(voice_json("V0", PERSON_A, 300),
+                               voice_json("V1", PERSON_A, 40, seed=5))
+            return payload(silent=True)
+        return analyze
+
+    def test_silent_remote_analyses_the_mic_track(self):
+        (self.run_dir / "audio").mkdir()
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"x")
+        calls = []
+        status = self.step(analyzer=self.mic_analyzer(calls))
+        self.assertEqual(calls, ["Meeting.m4a", "mic.wav"])
+        self.assertIn("mic track: 2 of 2 voices named", status)
+        document = vs.read_speakers(self.run_dir)
+        self.assertEqual(document["track"], "mic")
+        self.assertEqual(document["voices"][0]["person"], "Person A")
+
+    def test_mic_track_failure_never_breaks_the_step(self):
+        (self.run_dir / "audio").mkdir()
+        (self.run_dir / "audio" / "mic.wav").write_bytes(b"x")
+
+        def analyze(audio):
+            if Path(audio).name == "mic.wav":
+                raise RuntimeError("boom")
+            return payload(silent=True)
+        status = self.step(analyzer=analyze)
+        self.assertTrue(status.startswith("done: remote audio was not captured"))
+        self.assertIn("not analysed", status)
+
     def write_metadata(self, folder, names):
         import json
         (folder / "meeting_metadata.json").write_text(json.dumps({
@@ -136,6 +169,26 @@ class RunVoiceStepTests(unittest.TestCase):
         self.assertIn("participants updated", status)
         self.assertEqual(self.read_names(self.run_dir), ["Person A"])
         self.assertEqual(self.read_names(twin), ["Person A"])
+
+    def test_early_step_leaves_participants_for_later(self):
+        self.write_metadata(self.run_dir, ["Mentioned"])
+        status = voice_auto.run_early_voice_step(
+            self.run_dir, self.audio, self.settings,
+            store_path=self.store_path, pending_dir=self.pending,
+            log_path=self.log_path, analyzer=self.good)
+        self.assertTrue(status.startswith("done"))
+        self.assertNotIn("participants", status)
+        self.assertIsNotNone(vs.read_speakers(self.run_dir))
+        self.assertEqual(self.read_names(self.run_dir), ["Mentioned"])
+        # ...and finishing updates them from the saved voices, with no audio analysis.
+        suffix = voice_auto.finish_participants(
+            self.run_dir, self.settings, store_path=self.store_path)
+        self.assertIn("participants updated", suffix)
+        self.assertEqual(self.read_names(self.run_dir), ["Person A"])
+
+    def test_finishing_without_saved_voices_does_nothing(self):
+        self.assertEqual(voice_auto.finish_participants(
+            self.run_dir, self.settings, store_path=self.store_path), "")
 
     def test_participants_can_be_left_alone(self):
         self.write_metadata(self.run_dir, ["Mentioned"])

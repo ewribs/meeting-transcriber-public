@@ -6,6 +6,23 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.5 — 2026-10-27
+
+### Added (optional, off by default; needs voice recognition)
+- **Named transcripts.** With the `named_transcript` setting on (in the app's `settings.json`, or `MT_NAMED_TRANSCRIPT=1`), the AI steps read a transcript where every turn carries the speaker's name from `speakers.json` instead of "Mic" and "Remote". Voices that could not be named show as "Unidentified". `MT_NAMED_TRANSCRIPT=0` forces the setting off.
+- **Better Action Items.** A dedicated pass reads the named transcript and writes each item as a complete sentence with the owner's name. Every item must quote the transcript; items from a speaker's own first-person commitment are firm, and everything else is listed under **Other next steps mentioned (unconfirmed)**.
+- **Decisions, Risks and Open Questions.** A similar pass (two reads with different chunk boundaries, then a quote check, a second look and a one-item-at-a-time support check) fills these sections. Items that pass are shown normally; doubtful ones appear in labelled **Possible … (unconfirmed)** blocks instead of being dropped or passed off as fact.
+- **Transcript tab** in the Meetings workspace: the cleaned transcript with each speaker's name, read-only.
+- **Single-microphone meetings.** When the remote audio was not captured, the Mic track is analyzed for voices automatically, so speakerphone and in-person meetings get names too.
+- **Catch-up tool** (`catch_up.py`): rebuild older meetings with names from their saved material (no audio needed) in a staging folder, then apply with a backup of every replaced file and a per-meeting `undo`. `rebuild-all` (resumable, newest first), `tidy-all` and `apply-all` handle many meetings at once.
+
+### Fixed
+- Open questions are no longer closed by a later mention that only parks the topic or by the same speaker repeating it.
+- Near-duplicate wording (different word endings) is recognized, and stance statements or things said in the meeting itself no longer become action items.
+
+### Documentation
+- User Guide and Architecture describe named transcripts, the new passes and the catch-up tool.
+
 ## v2.2 — 2026-10-24
 
 ### Added

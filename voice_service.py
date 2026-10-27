@@ -167,9 +167,10 @@ def build_speakers_document(
     store: vp.VoiceStore,
     expected_names: Iterable[str] = (),
     now: datetime | None = None,
+    group: bool = True,
 ) -> dict:
     expected = [n.strip() for n in expected_names if n and n.strip()]
-    results = vp.identify_voices(payload_voices(payload), store)
+    results = vp.identify_voices(payload_voices(payload), store, group=group)
     hint = vp.suggest_by_elimination(results, expected, store) if expected else None
     names = {p.person_id: p.name for p in store.people()}
     raw = {v["voice_id"]: v for v in payload.get("voices", [])}
@@ -428,6 +429,10 @@ def confirm_voice(
     by_id = {v["id"]: v for v in document["voices"]}
     if voice_id not in by_id:
         raise VoiceServiceError("Unknown voice: " + voice_id)
+    # On a mic track the voices "that sound alike" can be different people (a
+    # speakerphone makes everyone sound alike), so never name them together.
+    if document.get("track") == "mic":
+        only_this = True
 
     person = store.ensure_person(name)
     targets = [voice_id] + ([] if only_this else [

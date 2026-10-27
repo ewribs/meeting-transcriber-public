@@ -246,3 +246,18 @@ class MeetingSpeakersTests(unittest.TestCase):
             run = Path(temp_dir)
             (run / "speakers.json").write_text("not json", encoding="utf-8")
             self.assertIsNone(load_meeting_detail({"location": str(run)})["speakers"])
+
+
+class TranscriptInDetailTests(unittest.TestCase):
+    def test_the_cleaned_transcript_is_part_of_the_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / "meeting_transcript_cleaned.md").write_text(
+                "**Sam** [00:01]\n\nHello there.\n", encoding="utf-8")
+            detail = load_meeting_detail({"location": str(run)})
+            self.assertIn("Hello there.", detail["transcript"])
+
+    def test_a_meeting_without_a_transcript_has_an_empty_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(load_meeting_detail({"location": tmp})["transcript"], "")
+        self.assertEqual(load_meeting_detail({})["transcript"], "")

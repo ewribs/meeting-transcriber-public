@@ -16,10 +16,13 @@
     python3 voice_cli.py noise-check RUN     measure whether each voice is speech
                                              or static
     python3 voice_cli.py show RUN            show what was worked out
+    python3 voice_cli.py names RUN           write a copy of the transcript with
+                                             people's names on the lines
     python3 voice_cli.py confirm RUN ...     say who a voice is
 
 RUN is a meeting's folder name (or path). Nothing here changes the
-transcript; names are kept in the meeting's speakers.json.
+transcript; names are kept in the meeting's speakers.json. `names` writes a
+separate meeting_transcript_named.md and leaves the original alone.
 """
 
 from __future__ import annotations
@@ -119,6 +122,38 @@ def print_document(document: dict, run_name: str) -> None:
         print(f"To accept: python3 voice_cli.py confirm {run_name} --accept-hint")
 
 
+def _print_voice_samples(run_dir: Path, document: dict, per_voice: int = 6) -> None:
+    """Show what each voice said, from the mic transcript, so you can tell who it is."""
+    import transcript_names
+    import utils
+    vtt = Path(run_dir) / "transcript" / "mic.vtt"
+    if not vtt.exists():
+        return
+    entries = utils.parse_vtt_file(vtt, "Mic")
+    samples: dict[str, list[str]] = {}
+    counts: dict[str, int] = {}
+    for entry in entries:
+        best, best_seconds, total = None, 0.0, 0.0
+        for voice in document.get("voices", []):
+            seconds = transcript_names._overlap(entry.start, entry.end, voice.get("turns", []))
+            total += seconds
+            if seconds > best_seconds:
+                best, best_seconds = voice["id"], seconds
+        if (best is None or total < transcript_names.MIN_VOICED_SECONDS
+                or best_seconds / total < transcript_names.MIN_DOMINANCE):
+            best = "?"
+        counts[best] = counts.get(best, 0) + 1
+        samples.setdefault(best, []).append(
+            f"[{int(entry.start // 60):02d}:{int(entry.start % 60):02d}] {' '.join(entry.text.split())}")
+    print("\nWhat each voice said (a sample of lines; ? = could not tell):")
+    for voice_id in sorted(counts):
+        lines = samples[voice_id]
+        step = max(1, len(lines) // per_voice)
+        print(f"\n  voice {voice_id}: {counts[voice_id]} lines")
+        for line in lines[::step][:per_voice]:
+            print("    " + (line if len(line) <= 120 else line[:117] + "..."))
+
+
 def _load_store(path: Path) -> vp.VoiceStore:
     return vp.VoiceStore.load(path)
 
@@ -212,11 +247,30 @@ def main(
                    help="clips to save of each voice (default 1)")
     p.add_argument("--out", type=Path, help="folder for clips (default ~/voice-clips)")
 
+    p = sub.add_parser("names", help="write a copy of a transcript with people's names on the lines")
+    p.add_argument("run")
+
+    p = sub.add_parser("mic-probe", help="try the voice analysis on a meeting's MIC track and show who it finds (saves nothing)")
+    p.add_argument("run")
+    p.add_argument("--audio", type=Path, help="default: the meeting's audio/mic.wav")
+    p.add_argument("--save", action="store_true",
+                   help="keep the result as this meeting's voices (marked as coming from the mic track)")
+    p.add_argument("--expect", default="", help="comma-separated names expected (you included)")
+    p.add_argument("--fresh", action="store_true",
+                   help="with --save: start over, dropping names you confirmed earlier for this meeting")
+    p.add_argument("--clips", action="store_true",
+                   help="also save short audio clips of each voice to listen to")
+    p.add_argument("--count", type=int, default=2,
+                   help="clips to save of each voice (default 2)")
+    p.add_argument("--out", type=Path, help="folder for clips (default ~/voice-clips)")
+
     p = sub.add_parser("confirm")
     p.add_argument("run")
     p.add_argument("name", nargs="?")
     p.add_argument("--voice")
     p.add_argument("--accept-hint", action="store_true")
+    p.add_argument("--only-this", action="store_true",
+                   help="name just this voice, not the ones that sound like it")
 
     args = parser.parse_args(argv)
 
@@ -804,6 +858,64 @@ def main(
             return 2
         store = _load_store(store_path)
 
+        if args.command == "names":
+            import config
+            import transcript_names
+            try:
+                path, counts = transcript_names.write_named_transcript(
+                    run_dir, config.SELF_NAME)
+            except transcript_names.TranscriptNamesError as error:
+                print("Error: " + str(error))
+                return 1
+            print(f"Wrote {path}")
+            for label, count in sorted(counts.items(), key=lambda item: -item[1]):
+                print(f"  {label}: {count} paragraphs")
+            return 0
+
+        if args.command == "mic-probe":
+            audio = args.audio or (run_dir / "audio" / "mic.wav")
+            if not Path(audio).exists():
+                print("No mic track found for this meeting. Pass one with --audio PATH.")
+                return 2
+            if worker is None:
+                python_path = _voice_python(args.python)
+                if not python_path:
+                    print("Voice environment not set. Run: "
+                          "python3 voice_cli.py set-python PATH_TO_PYTHON")
+                    return 2
+                worker = _make_worker(python_path, cache_dir)
+            payload = worker(Path(audio))
+            expected = [n.strip() for n in args.expect.split(",") if n.strip()]
+            document = vs.build_speakers_document(payload, store, expected, group=False)
+            if args.save:
+                document["track"] = "mic"
+                if not args.fresh:
+                    document = vs.keep_confirmations(vs.read_speakers(run_dir), document)
+                vs.write_speakers(run_dir, document)
+                vs.mirror_speakers(run_dir, archive_dir)
+                vs.save_pending(run_dir.name, payload, pending_dir)
+                print("MIC TRACK. Saved as this meeting's voices.\n")
+            else:
+                print("MIC TRACK ONLY. Nothing was saved to the meeting.\n")
+            print_document(document, run_dir.name)
+            _print_voice_samples(run_dir, document)
+            if args.clips:
+                out_dir = (args.out or Path.home() / "voice-clips").expanduser()
+                print()
+                for voice in document["voices"]:
+                    windows = voice_sources.pick_clip_windows(
+                        voice.get("turns", []), max(args.count, 1))
+                    for index, window in enumerate(windows, 1):
+                        name = f"micprobe_voice{_short(voice['id'])}_{index}.wav"
+                        try:
+                            clipper(Path(audio), window[0], window[1], out_dir / name)
+                        except Exception as error:
+                            print(f"  could not make a clip of voice {_short(voice['id'])}: {error}")
+                            continue
+                        print(f"  voice {_short(voice['id'])}: {out_dir / name}")
+                print(f"\nOpen the folder with: open {out_dir}")
+            return 0
+
         if args.command == "identify":
             audio = voice_sources.resolve_audio(
                 run_dir, meetings_dir, args.audio, archive_dir
@@ -882,7 +994,8 @@ def main(
                 print(f"Voice '{voice}' not found. Voices: "
                       + ", ".join(_short(i) for i in ids))
                 return 2
-            info = vs.confirm_voice(run_dir, matches[0], name, store, pending_dir)
+            info = vs.confirm_voice(run_dir, matches[0], name, store, pending_dir,
+                                    only_this=args.only_this)
             vs.mirror_speakers(run_dir, archive_dir)
             store.save(store_path)
             if voice_review._participants_setting():

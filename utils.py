@@ -34,7 +34,50 @@ NOISE_NGRAM_SIZE = 4
 NOISE_UNIQUE_RATIO_LIMIT = 0.60
 
 # Counts of what the most recent run removed. Counts only (no text).
-LAST_NOISE_REPORT = {"empty_entries": 0, "repetition_loops": 0}
+LAST_NOISE_REPORT = {"empty_entries": 0, "repetition_loops": 0, "repeated_words": 0}
+
+# Whisper sometimes stutters ("Yeah, yeah, yeah, yeah, yeah, yeah, ..."), far
+# beyond anything a person says. A single word said more than this many times in
+# a row is cut down to REPEAT_KEEP; a short phrase (2 to 6 words) said
+# PHRASE_REPEAT_LIMIT or more times in a row is cut down to PHRASE_REPEAT_KEEP.
+WORD_REPEAT_LIMIT = 4
+REPEAT_KEEP = 3
+PHRASE_REPEAT_LIMIT = 4
+PHRASE_REPEAT_KEEP = 2
+PHRASE_MAX_WORDS = 6
+
+
+def _word_key(token: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", token.lower())
+
+
+def collapse_repeated_words(text: str) -> tuple[str, int]:
+    """Cut stutters down; returns the text and how many words were removed."""
+    tokens = text.split()
+    removed = 0
+    for size in range(1, PHRASE_MAX_WORDS + 1):
+        limit = WORD_REPEAT_LIMIT if size == 1 else PHRASE_REPEAT_LIMIT - 1
+        keep = REPEAT_KEEP if size == 1 else PHRASE_REPEAT_KEEP
+        result: list[str] = []
+        index = 0
+        while index < len(tokens):
+            unit = [_word_key(t) for t in tokens[index:index + size]]
+            if len(unit) < size or not all(unit):
+                result.append(tokens[index])
+                index += 1
+                continue
+            count = 1
+            while [_word_key(t) for t in tokens[index + count * size:index + (count + 1) * size]] == unit:
+                count += 1
+            if count > limit:
+                result.extend(tokens[index:index + keep * size])
+                removed += (count - keep) * size
+                index += count * size
+            else:
+                result.append(tokens[index])
+                index += 1
+        tokens = result
+    return " ".join(tokens), removed
 
 
 def has_speech_characters(text: str) -> bool:
@@ -204,6 +247,7 @@ def remove_silence_entries(
 
     LAST_NOISE_REPORT["empty_entries"] = 0
     LAST_NOISE_REPORT["repetition_loops"] = 0
+    LAST_NOISE_REPORT["repeated_words"] = 0
 
     silence_markers = {
         "[silence]",
@@ -266,14 +310,21 @@ def merge_adjacent_speakers(
     # entries is seen as one block.
     merged = remove_repetition_loops(merged)
 
+    for entry in merged:
+        entry.text, removed_words = collapse_repeated_words(entry.text)
+        LAST_NOISE_REPORT["repeated_words"] += removed_words
+
     removed_empty = LAST_NOISE_REPORT["empty_entries"]
     removed_loops = LAST_NOISE_REPORT["repetition_loops"]
 
-    if removed_empty or removed_loops:
+    removed_repeats = LAST_NOISE_REPORT["repeated_words"]
+
+    if removed_empty or removed_loops or removed_repeats:
         print(
             "Noise filter removed "
             f"{removed_empty} empty entries and "
-            f"{removed_loops} repetition loops."
+            f"{removed_loops} repetition loops"
+            + (f", and cut {removed_repeats} stuttered words." if removed_repeats else ".")
         )
 
     return merged

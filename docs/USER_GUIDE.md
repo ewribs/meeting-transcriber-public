@@ -38,7 +38,7 @@ Folders are your own groupings; a meeting can be in several. A folder can be tur
 A meeting can expose:
 
 - Summary.
-- Cleaned transcript.
+- Cleaned transcript (the **Transcript** tab shows it with each speaker's name).
 - Structured Topics.
 - Decisions.
 - Action items / commitments / follow-ups when grounded in the meeting.
@@ -162,9 +162,29 @@ After you name someone, the app re-checks your other meetings against what it ju
 
 **Participants.** With **List the people who spoke as the meeting's participants** on, the meeting list shows who was actually heard, not names guessed from the title or mentioned in the transcript. Names in the title that were not heard are kept, as lower confidence. Meetings without usable voice data keep their old list. To apply this to existing meetings: `python3 voice_cli.py participants` compares the two methods, `participants-new` previews the change, `participants-new --apply` writes it (`--restore` puts the old lists back), and `tools/mt rebuild-index` refreshes the sidebar.
 
-**When the remote audio was not captured.** If a call was taken on speakerphone, the Remote track is silent and the other voices are only in your Mic track. The meeting is marked "remote not captured" and no voices are named.
+**When the remote audio was not captured.** If a call was taken on speakerphone, the Remote track is silent and the other voices are only in your Mic track. The meeting is marked "remote not captured" and the Mic track is analyzed instead, so the voices in the room are named when they match a known person. Voices that match nobody stay unnamed.
 
 **Privacy.** Voice fingerprints are biometric data about other people. They are stored only in the app's Application Support folder with private permissions, and are never saved in meetings, exports, archives or the repository. The fingerprints kept for voices that have no name yet are deleted after six months by default; change this in Preferences → Voices, or choose Never delete. Named people are kept until you delete them. Each meeting's `speakers.json` holds only timings, voice numbers and names. See [Setup & Security](SETUP_AND_SECURITY.md#voice-recognition-optional).
+
+## Named transcripts (optional, needs voice recognition)
+
+By default the AI steps read a transcript labelled **Mic** and **Remote**, so they cannot tell who owns a task. With **named transcripts** on, each turn carries the speaker's name, and the Action Items, Decisions, Risks and Open Questions in the summary get the right owners.
+
+**Turn it on.** Set `"named_transcript": true` in the app's `settings.json` (in Application Support), or start the app's backend with `MT_NAMED_TRANSCRIPT=1`. It uses the voice information in each meeting's `speakers.json`, so voice recognition should be on. Voices that could not be named appear as **Unidentified**, and the app does not guess an owner for them.
+
+**What you get.**
+
+- **Action Items** are complete sentences with a named owner and, when said, a due date. Only a person's own first-person commitment ("I'll send it") is listed as an item; other next steps appear under **Other next steps mentioned (unconfirmed)**.
+- **Decisions**, **Risks and Concerns** and **Open Questions** show the items that the transcript clearly supports. Doubtful ones appear under **Possible … (unconfirmed)** instead of being dropped or presented as fact.
+- The **Transcript** tab in a meeting shows the cleaned transcript with each speaker's name.
+
+**Older meetings.** `python3 catch_up.py` rebuilds meetings that were processed before names existed, using the voice information and per-track transcripts already saved (no audio needed):
+
+1. `python3 catch_up.py list` shows every meeting and whether it can be caught up.
+2. `python3 catch_up.py rebuild-all` rebuilds each one in a separate staging folder, newest first. It can be stopped and started again, and takes several minutes per meeting.
+3. `python3 catch_up.py apply-all` replaces the cleaned transcript, summary, meeting memory, OneNote export and participants list, and saves the originals first. `python3 catch_up.py undo RUN` puts one meeting back. Rebuild the search index afterwards with `tools/mt rebuild-index`.
+
+You can also work on one meeting at a time with `rebuild RUN`, `apply RUN` and `undo RUN`. Meetings with no saved voice information are skipped.
 
 ## Recovery behavior
 

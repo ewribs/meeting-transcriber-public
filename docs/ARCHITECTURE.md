@@ -68,6 +68,8 @@ M4A source
   +-- voice recognition (optional; speakers.json and participants)
 ```
 
+With named transcripts on (see below), voice recognition runs before the AI steps so they read a transcript with speaker names.
+
 The meeting-memory pipeline is intentionally precision-sensitive. Decisions, commitments/follow-ups, and open questions are grounded/reconciled before final structured composition. Avoid adding independent post-processing layers without integration tests that exercise the production path.
 
 ## Voice recognition (optional)
@@ -100,6 +102,20 @@ Design rules:
 `backend_bridge.py` exposes `voice-settings` and `save-voice-settings` for the Preferences → Voices tab, and `voice-groups`, `voice-group-clips`, `voice-name-group`, `voice-group-state`, `voice-meeting`, `voice-meeting-clips`, `voice-meeting-name`, `voice-recent-meetings` and `voice-clips-clear` for the Speakers workspace and the per-meeting voices sheet. Python remains the source of truth.
 
 After a voice is named, every meeting is re-matched against the new fingerprints using the fingerprints saved when each meeting was analyzed (`voices/pending/`, kept for a configurable time, six months by default); no audio or voice environment is needed. Participant lists shown in the app come from the published meeting index, so it is rebuilt when participants change. Hide and ignore choices are kept in `voices/review_state.json` as meeting and voice ids only. Listening clips (`voices/clips/`) are deleted when the Speakers screen is left, when the app quits and at the next visit.
+
+## Named transcripts (optional)
+
+Off by default (`named_transcript` setting or `MT_NAMED_TRANSCRIPT=1`; `MT_NAMED_TRANSCRIPT=0` forces it off). The AI steps then read turns headed by speaker names, and extra passes write the structured sections.
+
+| Module | Role |
+| --- | --- |
+| `transcript_turns.py` / `transcript_names.py` | Build turns from the per-track transcripts and attach names from `speakers.json`. Voices with no name show as "Unidentified". |
+| `structured_cleaning.py` | Cleans the transcript turn by turn, keeping each turn's speaker. |
+| `action_items_pass.py` | Action items: each needs a verbatim quote, passes plain-code rules and a second look. Firm only when the owner is the speaker of the evidence and the wording is a first-person commitment; the rest become unconfirmed next steps. |
+| `signals_pass.py` | Decisions, risks and open questions: two reads, quote check, second look, one-item-at-a-time support check, firm/unconfirmed tiers, and a plain-code cleanup (`tidy_memory`) of older strict items. |
+| `catch_up.py` | Rebuilds older meetings from saved material in a staging folder, applies the changed files with backups and undo, and offers resumable batch commands. |
+
+The new passes only run in named mode and fall back to the older extraction if they fail. Their results are written into `meeting_memory.json` (`other_next_steps`, `other_decisions`, `other_risks`, `other_questions` hold the unconfirmed items) and composed into the summary by the same deterministic step as before. The Transcript tab reads `meeting_transcript_cleaned.md` through the meeting detail the Python bridge returns.
 
 ## Local AI execution
 

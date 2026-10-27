@@ -122,6 +122,7 @@ class BackendBridgeTests(unittest.TestCase):
             payload["schema_version"],
             6,
         )
+        self.assertEqual(payload["transcript"], "")
         self.assertEqual(payload["decisions"], [])
         self.assertEqual(payload["commitments"], [])
         self.assertEqual(payload["open_questions"], [])
