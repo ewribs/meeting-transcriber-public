@@ -245,6 +245,12 @@ def get_active_llm_model_name() -> str:
     return LLM_MODEL
 
 
+# A list while a catch-up rebuild runs: every failed model call is recorded, so a
+# rebuild that quietly fell back (for example after running out of memory) can be
+# refused instead of offered. None (the normal state) records nothing.
+LLM_FAILURES: list[str] | None = None
+
+
 def ask_llm(
     prompt: str,
     response_format=None,
@@ -253,11 +259,16 @@ def ask_llm(
 ) -> str:
     """Send a prompt through the configured local inference backend."""
     backend = _get_llm_backend()
-    response_text = backend.generate(
-        prompt,
-        response_format=response_format,
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        response_text = backend.generate(
+            prompt,
+            response_format=response_format,
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as error:
+        if LLM_FAILURES is not None:
+            LLM_FAILURES.append(str(error))
+        raise
 
     global _last_llm_elapsed_seconds
     _last_llm_elapsed_seconds = backend.last_elapsed_seconds

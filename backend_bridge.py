@@ -8,6 +8,7 @@ Richer artifacts are loaded lazily for a selected meeting.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from typing import Any, Iterable
@@ -2513,6 +2514,69 @@ def voice_meeting_change_payload(
     return {"schema_version": 1, **result, "rematch": rematch}
 
 
+def _names_roots():
+    from pathlib import Path
+
+    from app_settings import APP_SUPPORT_DIR
+
+    return (Path(APP_SUPPORT_DIR) / "catch_up",
+            Path(APP_SUPPORT_DIR) / "catch_up_backups")
+
+
+def meeting_names_status_payload(run: str) -> dict[str, Any]:
+    import names_refresh
+
+    folder, _o, _m, _a, _p, _s = _meeting_run(run)
+    staging, backups = _names_roots()
+    return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
+def meeting_names_rebuild_payload(run: str) -> dict[str, Any]:
+    """Rebuild the meeting with today's names in a staging folder (minutes)."""
+    import catch_up
+    import names_refresh
+
+    folder, _o, _m, _a, _p, _s = _meeting_run(run)
+    staging, backups = _names_roots()
+    # The pipeline prints progress lines; the app reads stdout as JSON.
+    with contextlib.redirect_stdout(sys.stderr):
+        result = catch_up.rebuild(folder, staging)
+    if result.get("state") != "built":
+        raise RuntimeError(result.get("reason") or "the rebuild did not finish")
+    return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
+def meeting_names_apply_payload(run: str) -> dict[str, Any]:
+    import catch_up
+    import names_refresh
+
+    folder, _o, _m, archive_dir, _p, _s = _meeting_run(run)
+    staging, backups = _names_roots()
+    with contextlib.redirect_stdout(sys.stderr):
+        catch_up.apply(folder, staging, backups, archive_dir)
+    return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
+def meeting_names_discard_payload(run: str) -> dict[str, Any]:
+    import names_refresh
+
+    folder, _o, _m, _a, _p, _s = _meeting_run(run)
+    staging, backups = _names_roots()
+    names_refresh.discard(folder, staging)
+    return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
+def meeting_names_undo_payload(run: str) -> dict[str, Any]:
+    import catch_up
+    import names_refresh
+
+    folder, _o, _m, archive_dir, _p, _s = _meeting_run(run)
+    staging, backups = _names_roots()
+    catch_up.undo(folder, backups, archive_dir)
+    names_refresh.discard(folder, staging)
+    return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
 def voice_recent_meetings_payload() -> dict[str, Any]:
     import voice_review
 
@@ -3098,6 +3162,36 @@ def build_parser() -> argparse.ArgumentParser:
     voice_meeting_change_parser.add_argument("voice_id")
     voice_meeting_change_parser.add_argument("name")
 
+    meeting_names_status_parser = subparsers.add_parser(
+        "meeting-names-status",
+        help="Say whether a meeting needs updating with newly named voices",
+    )
+    meeting_names_status_parser.add_argument("run")
+
+    meeting_names_rebuild_parser = subparsers.add_parser(
+        "meeting-names-rebuild",
+        help="Rebuild a meeting with today's names in a staging folder",
+    )
+    meeting_names_rebuild_parser.add_argument("run")
+
+    meeting_names_apply_parser = subparsers.add_parser(
+        "meeting-names-apply",
+        help="Apply the rebuilt meeting (originals are saved)",
+    )
+    meeting_names_apply_parser.add_argument("run")
+
+    meeting_names_discard_parser = subparsers.add_parser(
+        "meeting-names-discard",
+        help="Throw away a rebuilt meeting that was not applied",
+    )
+    meeting_names_discard_parser.add_argument("run")
+
+    meeting_names_undo_parser = subparsers.add_parser(
+        "meeting-names-undo",
+        help="Put back the originals saved by the last apply",
+    )
+    meeting_names_undo_parser.add_argument("run")
+
     subparsers.add_parser(
         "voice-recent-meetings",
         help="List recent meetings that have voice information",
@@ -3560,6 +3654,21 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "voice-meeting-change":
             payload = voice_meeting_change_payload(
                 args.run, args.voice_id, args.name)
+
+        elif args.command == "meeting-names-status":
+            payload = meeting_names_status_payload(args.run)
+
+        elif args.command == "meeting-names-rebuild":
+            payload = meeting_names_rebuild_payload(args.run)
+
+        elif args.command == "meeting-names-apply":
+            payload = meeting_names_apply_payload(args.run)
+
+        elif args.command == "meeting-names-discard":
+            payload = meeting_names_discard_payload(args.run)
+
+        elif args.command == "meeting-names-undo":
+            payload = meeting_names_undo_payload(args.run)
 
         elif args.command == "voice-recent-meetings":
             payload = voice_recent_meetings_payload()

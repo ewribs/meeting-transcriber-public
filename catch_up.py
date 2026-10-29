@@ -50,6 +50,7 @@ REPLACED = (
     "meeting_summary.html",
     "meeting_memory.json",
 )
+OPTIONAL = ("names_used.json",)      # carried over when the rebuild made one
 INPUTS = (
     "meeting_transcript.md",
     "meeting_transcript.html",
@@ -112,8 +113,23 @@ def problem_with(run_dir: Path) -> str | None:
     return None
 
 
+def check_model_failures(errors: list[str]) -> None:
+    """Refuse a rebuild in which any model step failed: the pipeline falls back
+    quietly (original words, older extraction), which must not replace a good meeting."""
+    if not errors:
+        return
+    first = next((line.strip() for line in str(errors[0]).splitlines() if line.strip()), "")
+    count = f"{len(errors)} model step{'s' if len(errors) != 1 else ''}"
+    if "memory" in " ".join(errors).casefold():
+        raise CatchUpError(
+            f"The Mac ran out of memory ({count} failed). Close other apps or wait for "
+            "other processing to finish, then try again. Nothing was changed.")
+    raise CatchUpError(f"{count} failed ({first[:160]}). Nothing was changed.")
+
+
 def default_runner(work: Path) -> None:
     """Repeat the steps after transcription, with names, inside `work`."""
+    import ai
     import config
     import pipeline
     import voice_auto
@@ -121,6 +137,7 @@ def default_runner(work: Path) -> None:
 
     previous = config.NAMED_TRANSCRIPT
     config.NAMED_TRANSCRIPT = True
+    ai.LLM_FAILURES = []
     try:
         if pipeline.named_transcript_for_run(work) is None:
             raise CatchUpError("no usable voice information, so no names")
@@ -134,8 +151,10 @@ def default_runner(work: Path) -> None:
             transcript_html=transcript_html,
             source_path=None,
         )
+        check_model_failures(ai.LLM_FAILURES)
         voice_auto.finish_participants(work, load_app_settings(), archive_dir=None)
     finally:
+        ai.LLM_FAILURES = None
         config.NAMED_TRANSCRIPT = previous
 
 
@@ -220,7 +239,7 @@ def apply(
     participants = _read_json(work / "meeting_metadata.json").get("participants")
     try:
         for where, base in bases:
-            for rel in REPLACED:
+            for rel in REPLACED + tuple(o for o in OPTIONAL if (work / o).exists()):
                 save_original(where, base, rel)
                 _copy(work / rel, base / rel)
             if participants is not None and (base / "meeting_metadata.json").exists():

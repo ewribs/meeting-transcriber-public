@@ -6,6 +6,15 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.6 — 2026-10-29
+
+### Added
+- **Update a meeting after naming voices.** When you name voices in a meeting after its summary was made, the meeting pane shows a strip ("Dana was named after this summary was made") with an **Update…** button. The update rebuilds the transcript, action items and summary with the new names in a staging area, in the background. You see how the item counts changed, then choose **Apply** (the originals are saved, and **Undo** puts them back) or **Discard**. The strip appears only when the newly named voices spoke at least 5% of the meeting, and only with named transcripts on. Backend: `names_refresh.py` and the `meeting-names-*` bridge commands.
+- Each summary built with names now records which named voices it was built with (`names_used.json`). `python3 names_refresh.py stamp-all` marks existing meetings as built with today's names.
+
+### Fixed
+- A catch-up rebuild is refused when any model step fails (for example when the Mac runs out of memory), instead of quietly falling back to the original words or the older extraction and offering the result. The app shows a short message and nothing is changed.
+
 ## v2.5.1 — 2026-10-27
 
 ### Fixed

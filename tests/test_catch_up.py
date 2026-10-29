@@ -248,5 +248,43 @@ class TidyTests(unittest.TestCase):
         self.assertEqual(catch_up.staged_state(self.staging, name), "applied")
 
 
+class ModelFailureTests(unittest.TestCase):
+    def test_no_failures_is_fine(self):
+        catch_up.check_model_failures([])
+
+    def test_running_out_of_memory_says_so(self):
+        with self.assertRaises(catch_up.CatchUpError) as caught:
+            catch_up.check_model_failures(["[METAL] Insufficient Memory (0000008)", "again"])
+        self.assertIn("ran out of memory", str(caught.exception))
+        self.assertIn("2 model steps", str(caught.exception))
+        self.assertIn("Nothing was changed", str(caught.exception))
+
+    def test_any_other_failure_names_the_first_problem(self):
+        with self.assertRaises(catch_up.CatchUpError) as caught:
+            catch_up.check_model_failures(["model busy\nmore detail"])
+        self.assertIn("1 model step failed (model busy)", str(caught.exception))
+
+    def test_ask_llm_records_failures_only_when_asked(self):
+        import ai
+        from unittest import mock
+
+        class Broken:
+            def generate(self, *args, **kwargs):
+                raise RuntimeError("[METAL] Insufficient Memory")
+
+        with mock.patch.object(ai, "_get_llm_backend", return_value=Broken()):
+            ai.LLM_FAILURES = None
+            with self.assertRaises(RuntimeError):
+                ai.ask_llm("hi")
+            self.assertIsNone(ai.LLM_FAILURES)
+            ai.LLM_FAILURES = []
+            try:
+                with self.assertRaises(RuntimeError):
+                    ai.ask_llm("hi")
+                self.assertEqual(len(ai.LLM_FAILURES), 1)
+            finally:
+                ai.LLM_FAILURES = None
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -124,6 +124,7 @@ struct MeetingsView: View {
     @State var sessionRefreshedRuns: Set<String> = []
     @State var renameMeetingTarget: Meeting?
     @State var voicesSheetTarget: VoiceSheetTarget?
+    @State var namesRefreshToken = 0
     @State var renameMeetingText = ""
     @State var renameMeetingError: String?
     @State var isRenamingMeeting = false
@@ -719,6 +720,7 @@ struct MeetingsView: View {
         }
         .sheet(item: $voicesSheetTarget) { target in
             MeetingVoicesSheet(target: target) {
+                namesRefreshToken += 1
                 Task {
                     await reloadSelectedMeetingDetail()
                 }

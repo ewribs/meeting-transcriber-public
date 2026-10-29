@@ -160,6 +160,10 @@ def run_ai_cleanup(
         encoding="utf-8",
     )
 
+    if named is not None:
+        import names_refresh
+        names_refresh.record_names_used(run_dir)
+
     return cleaned_transcript, cleaned_path
 
 

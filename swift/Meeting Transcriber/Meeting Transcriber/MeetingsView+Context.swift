@@ -76,6 +76,14 @@ extension MeetingsView {
 
                 Divider()
 
+                MeetingNamesBanner(
+                    run: meeting.run,
+                    refreshToken: namesRefreshToken
+                ) {
+                    Task { await reloadSelectedMeetingDetail() }
+                }
+                .id(meeting.run)
+
                 if isLoadingDetail {
                     ProgressView("Loading transcript…")
                         .frame(
@@ -138,6 +146,14 @@ extension MeetingsView {
                 meetingHeader(meeting)
 
                 Divider()
+
+                MeetingNamesBanner(
+                    run: meeting.run,
+                    refreshToken: namesRefreshToken
+                ) {
+                    Task { await reloadSelectedMeetingDetail() }
+                }
+                .id(meeting.run)
 
                 ScrollView {
                     VStack(

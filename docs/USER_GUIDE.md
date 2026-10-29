@@ -186,6 +186,8 @@ By default the AI steps read a transcript labelled **Mic** and **Remote**, so th
 
 You can also work on one meeting at a time with `rebuild RUN`, `apply RUN` and `undo RUN`. Meetings with no saved voice information are skipped.
 
+**After you name more voices.** When you name voices in a meeting (the **Voices…** button) after its summary was made, a strip appears under the meeting title: "Dana was named after this summary was made." Choose **Update…** to rebuild the transcript, action items and summary with the new names. The rebuild runs in the background and takes a few minutes. When it finishes, the strip shows how the item counts changed (for example "Action items 1 → 3"); choose **Apply** to replace the meeting's files, or **Discard** to throw the rebuild away. Applying saves the originals, and **Undo** (shown right after applying) puts them back. The strip appears only when the newly named voices spoke at least 5% of the meeting, and only with named transcripts on. Applying replaces the summary, so edits you made to it are overwritten; use Undo if that happens.
+
 ## Recovery behavior
 
 Meeting Transcriber intentionally separates transcription completion from publishing. If publishing fails after a meeting was processed successfully, the completed local run remains available and can be published again without retranscribing.
