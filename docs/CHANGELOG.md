@@ -6,6 +6,15 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.6.1 — 2026-11-03
+
+### Added
+- **Preview before applying an update.** After a meeting is rebuilt with new names, **Preview…** shows what was added and removed in the decisions, action items, risks and open questions, the full rebuilt summary, and the current summary, with Apply and Discard in the same window. Backend: `meeting-names-preview`.
+- **Progress while an update runs.** The waiting strip shows the current step (cleaning the transcript, finding action items, writing the summary).
+
+### Fixed
+- "The team / We / They will <do something>" (gather, have a conversation, track down, ...) is treated as a task, not a decision.
+
 ## v2.6 — 2026-10-29
 
 ### Added

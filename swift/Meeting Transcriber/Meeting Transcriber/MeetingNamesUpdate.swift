@@ -17,6 +17,7 @@ nonisolated struct MeetingNamesStatus: Decodable, Sendable, Equatable {
     let reason: String
     let staged: MeetingNamesStaged?
     let canUndo: Bool
+    let progress: String?
 
     enum CodingKeys: String, CodingKey {
         case state
@@ -25,7 +26,18 @@ nonisolated struct MeetingNamesStatus: Decodable, Sendable, Equatable {
         case reason
         case staged
         case canUndo = "can_undo"
+        case progress
     }
+}
+
+/// The rebuilt summary next to the current one, and what changed in the
+/// decisions, action items, risks and open questions.
+nonisolated struct MeetingNamesPreview: Decodable, Sendable, Equatable {
+    let current: String
+    let rebuilt: String
+    let changes: String
+    let added: Int
+    let removed: Int
 }
 
 nonisolated enum MeetingNamesCommand: String, Sendable {
@@ -59,6 +71,10 @@ struct MeetingNamesBanner: View {
     @State private var canUndoNow = false
     @State private var errorText: String?
     @State private var checkNote: String?
+    @State private var stepText = ""
+    @State private var pollTask: Task<Void, Never>?
+    @State private var preview: MeetingNamesPreview?
+    @State private var isLoadingPreview = false
     @State private var task: Task<Void, Never>?
 
     var body: some View {
@@ -72,6 +88,26 @@ struct MeetingNamesBanner: View {
                 }
 
             noticeContent
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { preview != nil },
+                set: { if !$0 { preview = nil } }
+            )
+        ) {
+            if let preview {
+                MeetingNamesPreviewSheet(
+                    preview: preview,
+                    onApply: {
+                        self.preview = nil
+                        perform(.apply)
+                    },
+                    onDiscard: {
+                        self.preview = nil
+                        perform(.discard)
+                    }
+                )
+            }
         }
     }
 
@@ -88,8 +124,15 @@ struct MeetingNamesBanner: View {
                 notice(tint: .accentColor) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(workingText)
-                        .font(.callout)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(workingText)
+                            .font(.callout)
+                        if !stepText.isEmpty {
+                            Text(stepText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                     if canCancel {
                         Button("Cancel") { task?.cancel() }
@@ -118,6 +161,12 @@ struct MeetingNamesBanner: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if isLoadingPreview {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Button("Preview…") { showPreview() }
+                        .disabled(isLoadingPreview)
                     Button("Discard") { perform(.discard) }
                     Button("Apply") { perform(.apply) }
                         .buttonStyle(.borderedProminent)
@@ -158,12 +207,29 @@ struct MeetingNamesBanner: View {
         }
     }
 
+    private func showPreview() {
+        isLoadingPreview = true
+        Task {
+            do {
+                preview = try await backend.meetingNamesPreview(run: run)
+            } catch {
+                errorText = Self.friendly(error)
+            }
+            isLoadingPreview = false
+        }
+    }
+
     private func perform(_ command: MeetingNamesCommand) {
         errorText = nil
         resultText = nil
         canUndoNow = false
         isWorking = true
+        stepText = ""
         canCancel = command == .rebuild
+        pollTask?.cancel()
+        if command == .rebuild {
+            startPolling()
+        }
         switch command {
         case .rebuild:
             workingText = "Rebuilding with the new names. This takes a few minutes."
@@ -198,7 +264,27 @@ struct MeetingNamesBanner: View {
                     errorText = Self.friendly(error)
                 }
             }
+            pollTask?.cancel()
+            stepText = ""
             isWorking = false
+        }
+    }
+
+    /// While a rebuild runs, asks every few seconds which step it is on. A separate
+    /// backend instance is used so cancelling the rebuild never stops a check.
+    private func startPolling() {
+        let checker = BackendService()
+        let runName = self.run
+        pollTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                if let latest = try? await checker.meetingNames(.status, run: runName),
+                   let step = latest.progress,
+                   !step.isEmpty {
+                    stepText = step
+                }
+            }
         }
     }
 
@@ -274,6 +360,90 @@ struct MeetingNamesBanner: View {
             .background(tint.opacity(0.12))
 
             Divider()
+        }
+    }
+}
+
+
+// MARK: - The preview sheet
+
+/// Lets you read what a rebuild produced before it replaces anything.
+struct MeetingNamesPreviewSheet: View {
+    let preview: MeetingNamesPreview
+    let onApply: () -> Void
+    let onDiscard: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var mode: Mode = .changes
+
+    private enum Mode: String, CaseIterable, Identifiable {
+        case changes = "What changed"
+        case rebuilt = "New summary"
+        case current = "Current summary"
+
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Preview of the update")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
+                Text(headline)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Picker("View", selection: $mode) {
+                    ForEach(Mode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 440)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+
+            Divider()
+
+            ScrollView {
+                MeetingMarkdownView(markdown: shownText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Text("Applying saves the originals; Undo puts them back.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button("Close") { dismiss() }
+                Button("Discard", role: .destructive) { onDiscard() }
+                Button("Apply") { onApply() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(14)
+        }
+        .frame(minWidth: 760, minHeight: 560)
+    }
+
+    private var headline: String {
+        "In decisions, action items, risks and open questions: \(preview.added) added, \(preview.removed) removed. Other sections are rewritten; see the new summary."
+    }
+
+    private var shownText: String {
+        switch mode {
+        case .changes: return preview.changes
+        case .rebuilt: return preview.rebuilt
+        case .current: return preview.current.isEmpty ? "No current summary." : preview.current
         }
     }
 }

@@ -88,6 +88,10 @@ class FilterTests(unittest.TestCase):
     def test_tasks_are_not_decisions(self):
         self.assertIn("task", sp._plain_filter("decisions", "Sam will create a summary for the renewal."))
         self.assertIsNone(sp._plain_filter("decisions", "The renewal goes to Beth because it is under five million."))
+        # "the team will <do something>" is a task too, not a decision
+        self.assertIn("task", sp._plain_filter("decisions", "The team will gather cost information for the project."))
+        self.assertIn("task", sp._plain_filter("decisions", "The team will have a conversation with Dana about the vendor."))
+        self.assertIsNone(sp._plain_filter("decisions", "The team will include the investment in the budget."))
 
     def test_looked_at_the_data_is_not_a_question_worth_keeping(self):
         self.assertIsNotNone(sp._plain_filter("open_questions", "Will Avery have had a chance to look at the data?"))

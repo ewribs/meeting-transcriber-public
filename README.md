@@ -27,6 +27,8 @@ The project combines **SwiftUI**, **Python**, **whisper.cpp**, **Ollama/MLX**, a
 - Publishes completed meetings to a configurable archive/NAS, including verified source-audio archival and retention controls.
 - Adapts local-AI execution through Auto / Conservative / Balanced / High Performance profiles.
 - Optionally recognizes who spoke from their voice, so the meeting list can show real participants instead of "Remote". This is off by default, runs entirely on your Mac, and needs a separate setup, including a free Hugging Face account for the speaker models (see [Installation](docs/INSTALL.md#optional-voice-recognition) and the [User Guide](docs/USER_GUIDE.md#voice-recognition-optional)).
+- Optionally (with voice recognition on) reads a transcript where every turn carries the speaker's name, writes action items with real owners, and fills Decisions, Risks and Open Questions with a quote check and clearly labelled "unconfirmed" tiers. See the [User Guide](docs/USER_GUIDE.md#named-transcripts-optional-needs-voice-recognition).
+- After you name more voices in a meeting, offers to rebuild its transcript, action items and summary with the new names, shows a **Preview** of what changed, and lets you **Apply** (originals saved, **Undo** available) or **Discard**.
 
 ## Current architecture
 

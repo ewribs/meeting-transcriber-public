@@ -139,6 +139,136 @@ class NamesRefreshTests(NamesFixture):
         self.assertFalse((self.folder / names_refresh.STAMP).exists())
 
 
+CURRENT = """# Meeting Summary
+
+## Executive Summary
+
+Old words.
+
+## Decisions
+- Unidentified will provide a video on Friday.
+- Reseller management goes live on Friday.
+
+**Possible decisions (unconfirmed)**
+- Vendors will be tested in a sandbox.
+
+## Action Items
+- Dana - See the release - Due date not identified
+
+## Risks and Concerns
+
+None identified.
+"""
+
+REBUILT = """# Meeting Summary
+
+## Executive Summary
+
+Completely new words.
+
+## Decisions
+- Reseller management goes live on Friday
+- The team will focus on reporting.
+
+**Possible decisions (unconfirmed)**
+- Vendors will be tested in a sandbox.
+
+## Action Items
+- AlexH - Explain how it works - Due: Friday
+
+## Risks and Concerns
+- A new reseller may not be set up.
+"""
+
+
+class PreviewTests(NamesFixture):
+    def staged(self, text):
+        write(self.staging / RUN / "work" / "meeting_summary.md", text)
+
+    def test_changes_list_only_what_differs_in_the_sections_people_act_on(self):
+        result = names_refresh.summary_changes(CURRENT, REBUILT)
+        text = result["changes"]
+        self.assertIn("### Decisions", text)
+        self.assertIn("**Added:** The team will focus on reporting.", text)
+        self.assertIn("**Removed:** Unidentified will provide a video on Friday.", text)
+        self.assertIn("**Added:** AlexH - Explain how it works", text)
+        self.assertIn("**Removed:** Dana - See the release", text)
+        self.assertIn("**Added:** A new reseller may not be set up.", text)
+        self.assertNotIn("None identified", text)
+        self.assertNotIn("new words", text)                 # the executive summary is not listed
+        self.assertNotIn("sandbox", text)                   # unchanged lines are not listed
+        self.assertNotIn("goes live on Friday", text)       # same line apart from a final period
+        self.assertEqual((result["added"], result["removed"]), (3, 2))
+
+    def test_identical_summaries_say_so(self):
+        result = names_refresh.summary_changes(CURRENT, CURRENT)
+        self.assertEqual((result["added"], result["removed"]), (0, 0))
+        self.assertIn("No differences", result["changes"])
+
+    def test_preview_reads_the_current_and_the_staged_summary(self):
+        write(self.folder / "meeting_summary.md", CURRENT)
+        self.staged(REBUILT)
+        result = names_refresh.preview(self.folder, self.staging)
+        self.assertEqual(result["current"], CURRENT)
+        self.assertEqual(result["rebuilt"], REBUILT)
+        self.assertEqual(result["added"], 3)
+
+    def test_preview_without_a_rebuild_is_refused(self):
+        with self.assertRaises(catch_up.CatchUpError):
+            names_refresh.preview(self.folder, self.staging)
+
+    def test_the_bridge_command_passes_it_through(self):
+        from unittest import mock
+        import backend_bridge
+        write(self.folder / "meeting_summary.md", CURRENT)
+        self.staged(REBUILT)
+        with mock.patch.object(backend_bridge, "_meeting_run",
+                               lambda run: (self.folder, None, None, None, None, None)), \
+                mock.patch.object(backend_bridge, "_names_roots",
+                                  lambda: (self.staging, self.backups)):
+            result = backend_bridge.meeting_names_preview_payload(RUN)
+        self.assertEqual(result["schema_version"], 1)
+        self.assertEqual(result["removed"], 2)
+
+
+class ProgressTests(NamesFixture):
+    def test_lines_become_plain_steps(self):
+        pt = names_refresh.progress_text
+        self.assertEqual(pt("Cleaning chunk 2/3..."), "Cleaning the transcript (part 2 of 3)")
+        self.assertEqual(pt("Looking for action items (names pass)..."), "Finding action items")
+        self.assertEqual(pt("Looking for decisions, risks and open questions (names pass)..."),
+                         "Finding decisions, risks and open questions")
+        self.assertEqual(pt("Summarizing complete transcript directly..."), "Writing the summary")
+        self.assertEqual(pt("Fetching 11 files: 100%"), "")
+
+    def test_the_tee_keeps_the_latest_step_and_passes_text_on(self):
+        import io
+        out = io.StringIO()
+        path = self.staging / RUN / names_refresh.PROGRESS
+        tee = names_refresh.ProgressTee(out, path)
+        tee.write("Cleaning chunk 1/3...\nnoise\nLooking for action")
+        self.assertEqual(path.read_text(), "Cleaning the transcript (part 1 of 3)")
+        tee.write(" items (names pass)...\n")
+        self.assertEqual(path.read_text(), "Finding action items")
+        self.assertIn("noise", out.getvalue())
+
+    def test_status_shows_the_step_while_a_rebuild_runs_and_not_when_ready(self):
+        names_refresh.record_names_used(self.folder)
+        write(self.staging / RUN / names_refresh.PROGRESS, "Writing the summary")
+        self.assertEqual(self.status()["progress"], "Writing the summary")
+        write(self.staging / RUN / "status.json", json.dumps({"state": "built"}))
+        self.assertEqual(self.status()["progress"], "")
+
+    def test_an_old_progress_file_is_ignored(self):
+        import os
+        import time
+        path = self.staging / RUN / names_refresh.PROGRESS
+        write(path, "Writing the summary")
+        old = time.time() - names_refresh.PROGRESS_FRESH_SECONDS - 60
+        os.utime(path, (old, old))
+        self.assertEqual(self.status()["progress"], "")
+
+
 class BridgeTests(NamesFixture):
     """The commands the app calls."""
 

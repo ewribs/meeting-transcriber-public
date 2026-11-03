@@ -2538,8 +2538,10 @@ def meeting_names_rebuild_payload(run: str) -> dict[str, Any]:
 
     folder, _o, _m, _a, _p, _s = _meeting_run(run)
     staging, backups = _names_roots()
-    # The pipeline prints progress lines; the app reads stdout as JSON.
-    with contextlib.redirect_stdout(sys.stderr):
+    # The pipeline prints progress lines; the app reads stdout as JSON. They go
+    # to stderr, and the latest step is kept in a file the app polls.
+    progress_file = staging / folder.name / names_refresh.PROGRESS
+    with contextlib.redirect_stdout(names_refresh.ProgressTee(sys.stderr, progress_file)):
         result = catch_up.rebuild(folder, staging)
     if result.get("state") != "built":
         raise RuntimeError(result.get("reason") or "the rebuild did not finish")
@@ -2564,6 +2566,14 @@ def meeting_names_discard_payload(run: str) -> dict[str, Any]:
     staging, backups = _names_roots()
     names_refresh.discard(folder, staging)
     return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
+
+
+def meeting_names_preview_payload(run: str) -> dict[str, Any]:
+    import names_refresh
+
+    folder, _o, _m, _a, _p, _s = _meeting_run(run)
+    staging, _backups = _names_roots()
+    return {"schema_version": 1, **names_refresh.preview(folder, staging)}
 
 
 def meeting_names_undo_payload(run: str) -> dict[str, Any]:
@@ -3186,6 +3196,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     meeting_names_discard_parser.add_argument("run")
 
+    meeting_names_preview_parser = subparsers.add_parser(
+        "meeting-names-preview",
+        help="Show the rebuilt summary and what changed, before applying",
+    )
+    meeting_names_preview_parser.add_argument("run")
+
     meeting_names_undo_parser = subparsers.add_parser(
         "meeting-names-undo",
         help="Put back the originals saved by the last apply",
@@ -3666,6 +3682,9 @@ def main(argv: list[str] | None = None) -> int:
 
         elif args.command == "meeting-names-discard":
             payload = meeting_names_discard_payload(args.run)
+
+        elif args.command == "meeting-names-preview":
+            payload = meeting_names_preview_payload(args.run)
 
         elif args.command == "meeting-names-undo":
             payload = meeting_names_undo_payload(args.run)

@@ -113,7 +113,10 @@ Off by default (`named_transcript` setting or `MT_NAMED_TRANSCRIPT=1`; `MT_NAMED
 | `structured_cleaning.py` | Cleans the transcript turn by turn, keeping each turn's speaker. |
 | `action_items_pass.py` | Action items: each needs a verbatim quote, passes plain-code rules and a second look. Firm only when the owner is the speaker of the evidence and the wording is a first-person commitment; the rest become unconfirmed next steps. |
 | `signals_pass.py` | Decisions, risks and open questions: two reads, quote check, second look, one-item-at-a-time support check, firm/unconfirmed tiers, and a plain-code cleanup (`tidy_memory`) of older strict items. |
-| `catch_up.py` | Rebuilds older meetings from saved material in a staging folder, applies the changed files with backups and undo, and offers resumable batch commands. |
+| `catch_up.py` | Rebuilds older meetings from saved material in a staging folder, applies the changed files with backups and undo, and offers resumable batch commands. A rebuild is refused if any model step fails (`ai.LLM_FAILURES`), for example when memory runs out. |
+| `names_refresh.py` | Update after naming voices. Each named-mode summary records the voices it was built with (`names_used.json`); `status` compares that with today's names and reports current, stale (newly named voices spoke at least 5% of the meeting), or ready (a staged rebuild exists). Also builds the Preview (`summary_changes`: added and removed items) and the progress line shown while a rebuild runs (`progress.txt`). |
+
+The Swift app reaches the update flow through `meeting-names-status`, `meeting-names-rebuild`, `meeting-names-preview`, `meeting-names-apply`, `meeting-names-discard` and `meeting-names-undo`. A rebuild starts from the transcript only, so it can differ from the current summary; the Preview exists so you decide before anything is replaced.
 
 The new passes only run in named mode and fall back to the older extraction if they fail. Their results are written into `meeting_memory.json` (`other_next_steps`, `other_decisions`, `other_risks`, `other_questions` hold the unconfirmed items) and composed into the summary by the same deterministic step as before. The Transcript tab reads `meeting_transcript_cleaned.md` through the meeting detail the Python bridge returns.
 

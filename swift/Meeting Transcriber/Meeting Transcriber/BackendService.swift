@@ -418,6 +418,29 @@ nonisolated struct BackendService: Sendable {
         }
     }
 
+    func meetingNamesPreview(
+        run: String
+    ) async throws -> MeetingNamesPreview {
+        let data = try await runBridge(
+            arguments: [
+                "meeting-names-preview",
+                run,
+            ]
+        )
+
+        do {
+            return try JSONDecoder().decode(
+                MeetingNamesPreview.self,
+                from: data
+            )
+        } catch {
+            throw invalidOutput(
+                data,
+                error: error
+            )
+        }
+    }
+
     func loadRecentVoiceMeetings() async throws -> [RecentVoiceMeeting] {
         let data = try await runBridge(
             arguments: [

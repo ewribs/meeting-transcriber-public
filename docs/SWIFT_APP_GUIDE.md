@@ -99,6 +99,20 @@ afterwards. **Change…** next to a name fixes a wrong one and takes back what t
 app learned from it. Voices that are really static or silence are shown at the
 bottom with a note. See [Speakers](#speakers) below.
 
+### Updating a meeting after naming voices
+
+When you name voices after a meeting's summary was made, and they spoke at
+least 5% of the meeting, a strip appears under the header: "Dana was named after
+this summary was made", with **Update…**. The update rebuilds the transcript,
+action items and summary in the background; the strip shows the current step
+(for example "Cleaning the transcript (part 2 of 4)"). When it finishes,
+**Preview…** opens a window with *What changed* (items added and removed in
+decisions, action items, risks and open questions), *New summary* and *Current
+summary*, and **Apply** and **Discard** buttons. Applying saves the originals,
+and **Undo** puts them back. If the Mac runs out of memory the update stops and
+nothing is changed. Results can differ from run to run, so read the preview
+before applying.
+
 ### Publish, unpublish and delete
 
 Publishing copies a finished meeting to the archive and verifies it. Deleting

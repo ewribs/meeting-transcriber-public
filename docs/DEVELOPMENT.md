@@ -107,6 +107,20 @@ tools/query/
 
 The supported end-user query experience is the native Swift app.
 
+### Benchmark and scan tools
+
+Read-only helpers for judging model and pass quality on your own meetings (nothing here changes a meeting):
+
+```text
+tools/benchmark/model_bench.sh           # run the same meetings through different models
+tools/benchmark/model_side_by_side.py    # side-by-side HTML of two models' results
+tools/refactor/repeat_scan.py            # repeated action items
+tools/refactor/signals_repeat_scan.py    # repeated decisions, risks and open questions
+tools/refactor/window_probe.py           # is a missed item found from a short passage?
+```
+
+Run the release and test commands with `MT_NAMED_TRANSCRIPT=0` so the results do not depend on your personal settings.
+
 ## Adding tests
 
 A new automated test should:

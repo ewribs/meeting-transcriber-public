@@ -92,10 +92,12 @@ _QUESTION_START = re.compile(
 
 
 _TASK_START = re.compile(
-    r"^[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)?\s+(?:will|is going to|plans to)\s+"
+    r"^(?:[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)?|[Tt]he team|[Ww]e|[Tt]hey)\s+"
+    r"(?:will|is going to|plans to)\s+"
     r"(?:create|send|schedule|reach out|follow up|put|ask|set up|draft|share|email|call|check|"
     r"write|prepare|review|update|talk to|contact|work with|organi[sz]e|handle|meet|"
-    r"bring|coordinate|transition|reach)\b")
+    r"bring|coordinate|transition|reach|gather|collect|track down|look into|"
+    r"have (?:a|another) (?:conversation|discussion|meeting|call))\b")
 _STATEMENT_LIKE = re.compile(
     r"\bconfirmed that\b|\bwill need to\b|\bshould\b|\bmust\b|\bhas not yet\b|"
     r"\bhave not yet\b|\bunclear\b|\bfair level\b", re.I)

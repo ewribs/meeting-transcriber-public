@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -80,7 +82,8 @@ def status(run_dir: Path, staging_root: Path, backup_root: Path) -> dict:
     import voice_service as vs
     run_dir = Path(run_dir)
     result = {"state": "off", "people": [], "share": 0.0, "reason": "",
-              "staged": None, "can_undo": _can_undo(run_dir.name, backup_root)}
+              "staged": None, "can_undo": _can_undo(run_dir.name, backup_root),
+              "progress": _progress(staging_root, run_dir.name)}
     if not getattr(config, "NAMED_TRANSCRIPT", False):
         result["reason"] = "named transcripts are off"
         return result
@@ -91,6 +94,7 @@ def status(run_dir: Path, staging_root: Path, backup_root: Path) -> dict:
     staged = _read(Path(staging_root) / run_dir.name / "status.json")
     if staged and staged.get("state") == "built":
         result["state"] = "ready"
+        result["progress"] = ""
         result["staged"] = {"old": staged.get("old"), "new": staged.get("new")}
         return result
     stamp = _read(run_dir / STAMP)
@@ -116,6 +120,138 @@ def discard(run_dir: Path, staging_root: Path) -> bool:
         shutil.rmtree(target)
         return True
     return False
+
+
+# ----------------------------------------------------------------- progress --
+
+PROGRESS = "progress.txt"
+PROGRESS_FRESH_SECONDS = 15 * 60
+
+
+def progress_text(line: str) -> str:
+    """A plain-words step for one line the rebuild printed ("" when it says nothing)."""
+    text = line.strip()
+    chunk = re.search(r"Cleaning chunk (\d+)/(\d+)", text)
+    if chunk:
+        return f"Cleaning the transcript (part {chunk.group(1)} of {chunk.group(2)})"
+    if "Cleaning" in text and "chunks" in text:
+        return "Cleaning the transcript"
+    if "action items" in text.casefold():
+        return "Finding action items"
+    if "decisions, risks" in text.casefold():
+        return "Finding decisions, risks and open questions"
+    if "ummar" in text:
+        return "Writing the summary"
+    return ""
+
+
+class ProgressTee:
+    """Stands in for stdout during a rebuild: passes the text on and keeps the
+    latest step in a small file the app can read while the rebuild runs."""
+
+    def __init__(self, stream, path: Path):
+        self.stream = stream
+        self.path = Path(path)
+        self._pending = ""
+
+    def write(self, text: str) -> int:
+        self.stream.write(text)
+        self._pending += text
+        *lines, self._pending = self._pending.split("\n")
+        for line in lines:
+            step = progress_text(line)
+            if step:
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    self.path.write_text(step, encoding="utf-8")
+                except OSError:
+                    pass
+        return len(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def isatty(self) -> bool:
+        return False
+
+
+def _progress(staging_root: Path, run_name: str) -> str:
+    path = Path(staging_root) / run_name / PROGRESS
+    try:
+        if time.time() - path.stat().st_mtime > PROGRESS_FRESH_SECONDS:
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+# ------------------------------------------------------------------ preview --
+
+_KEY_SECTIONS = ("decision", "action item", "next step", "risk", "concern", "open question")
+_EMPTY = re.compile(r"^none( identified| found| mentioned)?\.?$", re.IGNORECASE)
+_HEADING = re.compile(r"^(?:#{2,3}\s+(.+?)|\*\*([^*]+)\*\*)\s*$")
+
+
+def _sections(markdown: str) -> dict[str, list[str]]:
+    """{heading: its lines} for a summary, bullets stripped."""
+    found: dict[str, list[str]] = {}
+    heading = ""
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        match = _HEADING.match(line)
+        if match:
+            heading = (match.group(1) or match.group(2)).strip()
+            found.setdefault(heading, [])
+            continue
+        item = re.sub(r"^[-*\u2022]\s+", "", line)
+        if not _EMPTY.match(item):          # "None identified." is an empty section
+            found.setdefault(heading, []).append(item)
+    return found
+
+
+def _same(line: str) -> str:
+    return re.sub(r"[\s.]+$", "", re.sub(r"\s+", " ", line.casefold()))
+
+
+def summary_changes(current: str, rebuilt: str) -> dict:
+    """What differs in the sections people act on (decisions, action items, risks,
+    open questions and their unconfirmed lists), as markdown plus counts."""
+    old, new = _sections(current), _sections(rebuilt)
+    headings = [h for h in new if h in old or h in new] + [h for h in old if h not in new]
+    blocks, added_total, removed_total = [], 0, 0
+    for heading in headings:
+        if not any(word in heading.casefold() for word in _KEY_SECTIONS):
+            continue
+        before, after = old.get(heading, []), new.get(heading, [])
+        seen_before = {_same(x) for x in before}
+        seen_after = {_same(x) for x in after}
+        added = [x for x in after if _same(x) not in seen_before]
+        removed = [x for x in before if _same(x) not in seen_after]
+        if not added and not removed:
+            continue
+        added_total += len(added)
+        removed_total += len(removed)
+        block = [f"### {heading}"]
+        block += [f"- **Added:** {line}" for line in added]
+        block += [f"- **Removed:** {line}" for line in removed]
+        blocks.append("\n".join(block))
+    text = "\n\n".join(blocks) if blocks else (
+        "No differences in the decisions, action items, risks or open questions.")
+    return {"changes": text, "added": added_total, "removed": removed_total}
+
+
+def preview(run_dir: Path, staging_root: Path) -> dict:
+    """The current and the rebuilt summary, and what changed between them."""
+    run_dir = Path(run_dir)
+    staged = Path(staging_root) / run_dir.name / "work" / "meeting_summary.md"
+    if not staged.exists():
+        raise catch_up.CatchUpError("There is no rebuilt summary to preview. Update the meeting first.")
+    current_path = run_dir / "meeting_summary.md"
+    current = current_path.read_text(encoding="utf-8") if current_path.exists() else ""
+    rebuilt = staged.read_text(encoding="utf-8")
+    return {"current": current, "rebuilt": rebuilt, **summary_changes(current, rebuilt)}
 
 
 def stamp_all(output_root: Path) -> dict:
