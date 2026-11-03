@@ -57,8 +57,22 @@ class NamesFixture(unittest.TestCase):
 
 
 class NamesRefreshTests(NamesFixture):
-    def test_a_meeting_built_before_names_were_tracked_is_unknown(self):
-        self.assertEqual(self.status()["state"], "unknown")
+    def test_a_meeting_built_without_any_names_is_stale_once_voices_are_named(self):
+        # No record of names used: it was built without names (voice recognition
+        # could not run). Sam speaks 60% of it, so he counts as newly named.
+        result = self.status()
+        self.assertEqual((result["state"], result["people"]), ("stale", ["Sam"]))
+
+    def test_no_record_and_no_named_voices_is_current(self):
+        self.rename()
+        self.assertEqual(self.status()["state"], "current")
+
+    def test_no_record_and_only_a_brief_named_voice_is_current(self):
+        write(self.folder / "speakers.json", json.dumps({
+            "version": vs.SPEAKERS_VERSION, "voices": [
+                {"id": "a", "seconds": 99, "turns": 5, "status": "unknown", "person": ""},
+                {"id": "b", "seconds": 1, "turns": 1, "status": "named", "person": "Sam"}]}))
+        self.assertEqual(self.status()["state"], "current")
 
     def test_nothing_changed_since_the_build_is_current(self):
         names_refresh.record_names_used(self.folder)

@@ -1,4 +1,4 @@
-import sys, unittest
+import contextlib, io, sys, unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "maintenance"))
 import upgrade_tool as u
@@ -67,6 +67,65 @@ class UpgradeToolTests(unittest.TestCase):
             (d / "new.m4a").write_text("b")
             os.utime(d / "old.m4a", (1, 1))
             self.assertEqual(u.latest_recording(d).name, "new.m4a")
+
+
+class VoiceCheckTests(unittest.TestCase):
+    def test_off_means_nothing_to_check(self):
+        self.assertIsNone(u.voice_check({"voice_recognition_enabled": False})[0])
+
+    def test_on_without_an_environment_is_a_problem(self):
+        self.assertFalse(u.voice_check({"voice_recognition_enabled": True, "voice_python": ""})[0])
+
+    def test_on_with_a_missing_python_is_a_problem(self):
+        ok, detail = u.voice_check({"voice_recognition_enabled": True,
+                                    "voice_python": "/no/such/venv/bin/python"})
+        self.assertFalse(ok)
+        self.assertIn("does not exist", detail)
+
+    def test_a_working_environment_passes(self):
+        calls = []
+
+        def runner(cmd, timeout=None, stdout_only=False):
+            calls.append(cmd)
+            return 0, "ok\n"
+
+        ok, _detail = u.voice_check({"voice_recognition_enabled": True,
+                                     "voice_python": sys.executable}, runner)
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][0], sys.executable)
+
+    def test_missing_packages_are_named(self):
+        ok, detail = u.parse_voice_check("missing: torch, numpy\n")
+        self.assertFalse(ok)
+        self.assertIn("torch, numpy", detail)
+        self.assertFalse(u.parse_voice_check("")[0])
+
+
+class ModelCheckTests(unittest.TestCase):
+    def test_parse_model_check(self):
+        self.assertEqual(u.parse_model_check('noise\n{"text": "PINEAPPLE", "seconds": 4.2}\n'),
+                         (True, "answered in 4.2s"))
+        self.assertFalse(u.parse_model_check('{"text": "banana", "seconds": 1}')[0])
+        self.assertFalse(u.parse_model_check("")[0])
+        self.assertFalse(u.parse_model_check("not json")[0])
+
+
+class TestEnvironmentTests(unittest.TestCase):
+    def test_unit_tests_run_with_named_transcripts_forced_off(self):
+        from unittest import mock
+        calls = []
+
+        def fake_run(cmd, timeout=None, stdout_only=False, env=None):
+            calls.append((cmd, env))
+            return 0, "Ran 1 tests in 0s\n\nOK\n"
+
+        name = next(iter(u.COMPONENTS))
+        with mock.patch.object(u, "_run", fake_run), mock.patch.dict(
+                "os.environ", {"MT_NAMED_TRANSCRIPT": "1"}):
+            with contextlib.redirect_stdout(io.StringIO()):
+                u.run_checks(name, {})
+        unit = [env for cmd, env in calls if "unittest" in cmd]
+        self.assertEqual(unit[0]["MT_NAMED_TRANSCRIPT"], "0")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from datetime import datetime
@@ -189,10 +190,63 @@ def choose_component():
     return None
 
 
+MODEL_CHECK_CODE = (
+    "import json, time, ai\n"
+    "start = time.time()\n"
+    "text = ai.ask_llm('Reply with exactly the single word: PINEAPPLE')\n"
+    "print(json.dumps({'text': str(text)[:200], 'seconds': round(time.time() - start, 1)}))\n"
+)
+
+
+def parse_model_check(text):
+    """(ok, detail) from the quick model check's JSON output."""
+    try:
+        data = json.loads(text.strip().splitlines()[-1])
+    except (ValueError, IndexError, AttributeError):
+        return False, "the model did not answer"
+    ok = "pineapple" in str(data.get("text", "")).lower()
+    return ok, (f"answered in {data.get('seconds')}s" if ok else "the answer was not what was asked for")
+
+
+VOICE_CHECK_CODE = (
+    "import importlib.util as u\n"
+    "missing = [m for m in ('numpy', 'soundfile', 'torch', 'pyannote.audio') if u.find_spec(m) is None]\n"
+    "print('missing: ' + ', '.join(missing) if missing else 'ok')\n"
+)
+
+
+def parse_voice_check(text):
+    """(ok, detail) from the voice environment check's output."""
+    last = (text or "").strip().splitlines()[-1:] or [""]
+    if last[0] == "ok":
+        return True, "the voice environment starts and has its packages"
+    if last[0].startswith("missing:"):
+        return False, "the voice environment is missing " + last[0][len("missing:"):].strip()
+    return False, "the voice environment did not start"
+
+
+def voice_check(settings, runner=None):
+    """(ok, detail) for voice recognition, or (None, why) when there is nothing to check."""
+    runner = runner or _run
+    if not settings.get("voice_recognition_enabled"):
+        return None, "voice recognition is off, so nothing to check"
+    python_path = str(settings.get("voice_python") or "").strip()
+    if not python_path:
+        return False, "voice recognition is on but no voice environment is set"
+    if not Path(python_path).exists():
+        return False, f"voice recognition is on but {python_path} does not exist (a link to a removed Python?)"
+    try:
+        rc, out = runner([python_path, "-c", VOICE_CHECK_CODE], timeout=120, stdout_only=True)
+    except subprocess.TimeoutExpired:
+        return False, "the voice environment did not answer within 2 minutes"
+    return parse_voice_check(out) if rc == 0 else (False, "the voice environment did not start")
+
+
 # ---- running things -------------------------------------------------------
 
-def _run(cmd, timeout=None, stdout_only=False):
-    done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=_REPO_ROOT)
+def _run(cmd, timeout=None, stdout_only=False, env=None):
+    done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=_REPO_ROOT,
+                          env=env)
     if stdout_only:  # for JSON: warnings on stderr must not be mixed in
         return done.returncode, done.stdout or ""
     return done.returncode, (done.stdout or "") + (done.stderr or "")
@@ -209,10 +263,18 @@ def current_version(component, kind):
 
 def run_checks(component, cases):
     kind, uses_llm, smoke = COMPONENTS[component]
-    result = {"tests": None, "smoke": None, "benchmark": None, "audio": None}
+    result = {"tests": None, "smoke": None, "benchmark": None, "audio": None, "model": None,
+              "voices": None}
     print("  running unit tests...")
-    rc, out = _run([sys.executable, "-m", "unittest", "discover", "-s", "tests"])
+    # The tests must not depend on your own settings (named transcripts on or off).
+    test_env = {**os.environ, "MT_NAMED_TRANSCRIPT": "0"}
+    rc, out = _run([sys.executable, "-m", "unittest", "discover", "-s", "tests"], env=test_env)
     result["tests"] = parse_unittest_summary(out)
+    try:
+        from app_settings import load_app_settings
+        result["voices"] = voice_check(load_app_settings())
+    except Exception as error:      # noqa: BLE001 - a settings problem is reported, not fatal
+        result["voices"] = (False, f"could not read the settings ({error})")
     if smoke:
         print("  running quick start check...")
         rc, _ = _run(smoke, timeout=60)
@@ -229,6 +291,13 @@ def run_checks(component, cases):
         else:
             rc, out = _run([sys.executable, "backend_bridge.py", "audio-contract", str(recording)])
             result["audio"] = parse_audio_contract(out) if rc == 0 else (False, "the check could not run")
+    if uses_llm:
+        print("  checking that the model loads and answers (about a minute)...")
+        try:
+            rc, out = _run([sys.executable, "-c", MODEL_CHECK_CODE], timeout=600, stdout_only=True)
+            result["model"] = parse_model_check(out) if rc == 0 else (False, "the check could not run")
+        except subprocess.TimeoutExpired:
+            result["model"] = (False, "no answer within 10 minutes")
     if uses_llm and cases:
         print(f"  running benchmark cases ({', '.join(cases)}) - this takes several minutes each...")
         parsed = {}
@@ -250,6 +319,13 @@ def describe(result):
         ok, detail = result["audio"]
         label = "OK" if ok else ("skipped" if ok is None else "PROBLEM")
         lines.append(f"recording channel split: {label} ({detail})")
+    if result.get("voices") is not None:
+        ok, detail = result["voices"]
+        label = "OK" if ok else ("off" if ok is None else "PROBLEM")
+        lines.append(f"voice recognition: {label} ({detail})")
+    if result.get("model") is not None:
+        ok, detail = result["model"]
+        lines.append(f"model answers a test question: {'OK' if ok else 'PROBLEM'} ({detail})")
     for case, data in (result["benchmark"] or {}).items():
         lines.append(f"benchmark {case}: {'PASS' if data['passed'] else 'FAIL'}")
     return lines
@@ -259,6 +335,8 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Upgrade one tool with a before/after check.")
     p.add_argument("component", nargs="?", choices=sorted(COMPONENTS))
     p.add_argument("--cases", default=None, help="benchmark cases (comma separated); default: upgrade_cases.local.txt, else all")
+    p.add_argument("--full", action="store_true",
+                   help="also run the full benchmark before and after (20-30+ minutes); default is a quick model check")
     p.add_argument("--yes", action="store_true", help="skip the confirmation question")
     args = p.parse_args(argv)
 
@@ -269,6 +347,12 @@ def main(argv=None) -> int:
             return 0
     kind, uses_llm, _ = COMPONENTS[args.component]
     cases = [c for c in args.cases.split(",") if c] if args.cases else default_cases()
+    if uses_llm and not args.full and not args.cases:
+        full = False
+        if not args.yes:
+            full = input("Full benchmark (20-30+ minutes) or quick model check (about a minute)? [q/f] "
+                         ).strip().lower().startswith("f")
+        cases = cases if full else []
     old = current_version(args.component, kind)
     if old is None:
         print(f"Could not find an installed version of {args.component}. Nothing changed.")
@@ -313,6 +397,10 @@ def main(argv=None) -> int:
         problems.append("unit tests no longer pass")
     if after["audio"] is not None and after["audio"][0] is False:
         problems.append("the recording channel split check failed")
+    if after["voices"] is not None and after["voices"][0] is False:
+        problems.append("voice recognition no longer works")
+    if after["model"] is not None and not after["model"][0]:
+        problems.append("the model no longer answers a test question")
     if after["smoke"] is False:
         problems.append("the tool no longer starts")
     changes = compare_benchmarks(before["benchmark"] or {}, after["benchmark"] or {})

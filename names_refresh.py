@@ -74,9 +74,11 @@ def _can_undo(run_name: str, backup_root: Path) -> bool:
 def status(run_dir: Path, staging_root: Path, backup_root: Path) -> dict:
     """Where this meeting stands.
 
-    state: "off" (cannot be rebuilt, or named transcripts are off), "unknown" (built
-    before names were tracked), "current", "stale" (more voices named since the
-    build), "ready" (rebuilt, waiting for you to apply or discard).
+    state: "off" (cannot be rebuilt, or named transcripts are off), "current",
+    "stale" (more voices named since the build), "ready" (rebuilt, waiting for you
+    to apply or discard). A meeting with no record of the names it was built with
+    was built without any (for example, voice recognition could not run), so every
+    voice named since counts as new.
     """
     import config
     import voice_service as vs
@@ -97,10 +99,7 @@ def status(run_dir: Path, staging_root: Path, backup_root: Path) -> dict:
         result["progress"] = ""
         result["staged"] = {"old": staged.get("old"), "new": staged.get("new")}
         return result
-    stamp = _read(run_dir / STAMP)
-    if stamp is None:
-        result["state"] = "unknown"
-        return result
+    stamp = _read(run_dir / STAMP) or {}
     document = vs.read_speakers(run_dir)
     now, then = _named_voices(document), dict(stamp.get("voices") or {})
     fresh = [vid for vid, person in now.items() if then.get(vid) != person]

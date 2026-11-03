@@ -6,6 +6,16 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.6.4 — 2026-11-03
+
+### Fixed
+- A meeting made while voice recognition could not run (so it was built with no names) now gets the **Update…** strip once you name its voices. Before, a meeting with no record of the names it was built with never showed the strip.
+
+### Developer tools
+- The upgrade tool (`tools/maintenance/upgrade_tool.py`) runs its tests with named transcripts forced off, so they no longer depend on your settings.
+- For tools that use the model (mlx-lm, mlx, ollama) it now asks for a quick model check (the model loads and answers one question, about a minute) or the full benchmark (20-30+ minutes). Quick is the default; `--full` runs the benchmark.
+- It also checks that voice recognition still works, if it is on: the voice environment exists, starts and has its packages. A Python update that breaks the environment is reported straight away.
+
 ## v2.6.3 — 2026-11-03
 
 ### Fixed
