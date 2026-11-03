@@ -37,6 +37,28 @@ class PrivateTermsTests(unittest.TestCase):
             self.assertIn("case-x", names)
             self.assertNotIn("notes.txt", names)
 
+    def test_people_terms_come_from_private_files_and_leave_out_the_owner(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "known_people.json").write_text(json.dumps(["Zora Quill", "Mx"]))
+            (d / "sanitize_names.local.json").write_text(json.dumps({
+                "names": {"Orrin Vale": "Person A", "Selma": "Person B"},
+                "tests_only": {"Acmecorp": "Company"},
+                "report_terms": ["Zephyr Group"]}))
+            (d / "identity.local.json").write_text(json.dumps({
+                "self_name": "Selma", "self_reference_names": ["Sel"]}))
+            terms = pt.local_people_terms(d)
+            for expected in ("zora", "quill", "orrin", "vale", "acmecorp", "zephyr", "group"):
+                self.assertIn(expected, terms)
+            self.assertNotIn("selma", terms)   # the owner's own name is allowed
+            self.assertNotIn("mx", terms)      # too short to be a term
+
+    def test_people_terms_without_private_files_is_empty(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(pt.local_people_terms(Path(d)), set())
+
 
 if __name__ == "__main__":
     unittest.main()

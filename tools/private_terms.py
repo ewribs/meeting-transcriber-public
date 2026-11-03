@@ -12,6 +12,7 @@ run time. Terms that are harmless in code can be exempted through the
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -79,6 +80,48 @@ def local_names(root: Path, archive_dir: Path | None = None) -> list[str]:
         except OSError:
             pass
     return names
+
+
+def _read_json(path: Path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _words(values) -> set[str]:
+    found: set[str] = set()
+    for value in values:
+        for token in re.findall(r"[A-Za-z]{3,}", str(value)):
+            low = token.lower()
+            if low not in GENERIC_WORDS:
+                found.add(low)
+    return found
+
+
+def local_people_terms(base: Path) -> set[str]:
+    """Names kept in the private local files: known people, name replacements, report terms.
+
+    The owner's own names (identity.local.json) are left out, because they are
+    allowed to appear in the public repository.
+    """
+    base = Path(base)
+    terms: set[str] = set()
+    people = _read_json(base / "known_people.json")
+    if isinstance(people, list):
+        terms |= _words(people)
+    sanitize = _read_json(base / "sanitize_names.local.json")
+    if isinstance(sanitize, dict):
+        for key in ("names", "tests_only"):
+            if isinstance(sanitize.get(key), dict):
+                terms |= _words(sanitize[key])
+        if isinstance(sanitize.get("report_terms"), list):
+            terms |= _words(sanitize["report_terms"])
+    identity = _read_json(base / "identity.local.json")
+    if isinstance(identity, dict):
+        own = [identity.get("self_name", ""), *identity.get("self_reference_names", [])]
+        terms -= _words(own)
+    return terms
 
 
 _CAMEL_GAP = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")

@@ -92,11 +92,11 @@ def load_private_config(path: Path) -> dict:
 
 
 def load_derived_terms(config_path: Path, root: Path = None) -> set[str]:
-    """Private terms taken from local meeting/file names, minus the user's allow list."""
+    """Private terms from local meeting/file names and the private people lists, minus the allow list."""
     try:
-        from private_terms import derive_terms, local_names
+        from private_terms import derive_terms, local_names, local_people_terms
     except ImportError:  # pragma: no cover - run as a package
-        from tools.private_terms import derive_terms, local_names
+        from tools.private_terms import derive_terms, local_names, local_people_terms
     allow: set[str] = set()
     archive = None
     try:
@@ -107,6 +107,8 @@ def load_derived_terms(config_path: Path, root: Path = None) -> set[str]:
     except Exception:
         pass
     terms = derive_terms(local_names(root or ROOT, archive))
+    # Names kept in the private local files sit beside the audit config.
+    terms |= local_people_terms(Path(config_path).resolve().parent)
     return {t for t in terms if t not in allow}
 
 

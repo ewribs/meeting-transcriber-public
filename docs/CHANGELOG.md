@@ -6,6 +6,9 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+### Developer tools
+- The release audit and the history scan also block names kept in the private local files (known people, name replacements, report terms), not only names taken from meeting and file names. The owner's own names are left out; harmless words go in `derived_allow` as before.
+
 ## v2.6.1 — 2026-11-03
 
 ### Added
