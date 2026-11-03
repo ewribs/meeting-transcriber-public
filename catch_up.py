@@ -384,6 +384,21 @@ def undo(
     raise CatchUpError(f"{run_dir.name}: nothing to undo")
 
 
+def refresh_dashboard(archive_dir: Path | None, run_dir: Path) -> bool:
+    """Rebuild the published-meeting index and dashboard after an apply or undo.
+
+    Only a meeting that is published (has a copy in the archive) shows up there.
+    Never raises; False when nothing was done.
+    """
+    try:
+        if archive_dir is None or not (Path(archive_dir) / Path(run_dir).name).is_dir():
+            return False
+        import voice_review
+        return bool(voice_review.refresh_index(Path(archive_dir)))
+    except Exception:      # noqa: BLE001 - the meeting itself is already updated
+        return False
+
+
 def all_runs(output_root: Path) -> list[str]:
     """Meeting folders, newest first."""
     names = [p.name for p in Path(output_root).glob("20*") if p.is_dir()]
@@ -496,18 +511,23 @@ def apply_all(
     log: Callable[[str], None] = print,
 ) -> dict:
     counts = {"applied": 0, "failed": 0}
+    published_run = None
     for name in all_runs(output_root):
         if staged_state(staging_root, name) != "built":
             continue
         try:
             result = apply(Path(output_root) / name, staging_root, backup_root, archive_dir,
                            export=export)
+            if result["archive"]:
+                published_run = name
             counts["applied"] += 1
             log(f"{name}: applied {result['files']} files"
                 + (" (and the archived copy)" if result["archive"] else ""))
         except Exception as error:      # noqa: BLE001 - carry on with the others
             counts["failed"] += 1
             log(f"{name}: failed: {error}")
+    if published_run and refresh_dashboard(archive_dir, Path(published_run)):
+        log("Refreshed the meeting index and dashboard.")
     return counts
 
 

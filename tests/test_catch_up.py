@@ -286,6 +286,53 @@ class ModelFailureTests(unittest.TestCase):
                 ai.LLM_FAILURES = None
 
 
+class RefreshDashboardTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.archive = self.root / "archive"
+        self.folder = make_meeting(self.root / "output")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_refreshes_when_the_meeting_is_published(self):
+        from unittest import mock
+        make_meeting(self.archive)
+        with mock.patch("voice_review.refresh_index", return_value=True) as refresh:
+            self.assertTrue(catch_up.refresh_dashboard(self.archive, self.folder))
+        refresh.assert_called_once_with(self.archive)
+
+    def test_skips_a_meeting_that_is_not_published(self):
+        from unittest import mock
+        self.archive.mkdir()
+        with mock.patch("voice_review.refresh_index") as refresh:
+            self.assertFalse(catch_up.refresh_dashboard(self.archive, self.folder))
+            self.assertFalse(catch_up.refresh_dashboard(None, self.folder))
+        refresh.assert_not_called()
+
+    def test_never_raises(self):
+        from unittest import mock
+        make_meeting(self.archive)
+        with mock.patch("voice_review.refresh_index", side_effect=RuntimeError("boom")):
+            self.assertFalse(catch_up.refresh_dashboard(self.archive, self.folder))
+
+    def test_apply_all_refreshes_once_for_the_batch(self):
+        from unittest import mock
+        staging, backups = self.root / "staging", self.root / "backups"
+        for name in ("2026-01-01_1000_One", "2026-01-02_1000_Two"):
+            make_meeting(self.root / "output", name)
+            make_meeting(self.archive, name)
+            catch_up.rebuild(self.root / "output" / name, staging, fake_runner)
+        logs = []
+        with mock.patch("voice_review.refresh_index", return_value=True) as refresh:
+            counts = catch_up.apply_all(self.root / "output", staging, backups, self.archive,
+                                        export=fake_export, log=logs.append)
+        self.assertEqual(counts["applied"], 2)
+        refresh.assert_called_once_with(self.archive)
+        self.assertIn("Refreshed the meeting index and dashboard.", logs)
+
+
 QUOTE = "I will gather the cost information for the tools by Friday"
 
 

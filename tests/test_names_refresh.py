@@ -313,6 +313,17 @@ class BridgeTests(NamesFixture):
                 self.bridge.meeting_names_rebuild_payload(RUN)
         self.assertIn("model busy", str(caught.exception))
 
+    def test_apply_and_undo_refresh_the_dashboard(self):
+        from unittest import mock
+        with mock.patch.object(catch_up, "apply") as apply, \
+                mock.patch.object(catch_up, "undo") as undo, \
+                mock.patch.object(catch_up, "refresh_dashboard") as refresh:
+            self.bridge.meeting_names_apply_payload(RUN)
+            self.bridge.meeting_names_undo_payload(RUN)
+        apply.assert_called_once()
+        undo.assert_called_once()
+        self.assertEqual(refresh.call_count, 2)
+
     def test_progress_lines_never_reach_stdout(self):
         import contextlib
         import io

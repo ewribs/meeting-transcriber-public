@@ -6,6 +6,11 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.6.3 — 2026-11-03
+
+### Fixed
+- Applying (or undoing) an update after naming voices now refreshes the published-meeting index and the dashboard page, so the meeting list and `meeting_index.html` show the updated participants without running `tools/mt rebuild-index` by hand. `catch_up.py apply-all` refreshes once at the end of the batch.
+
 ## v2.6.2 — 2026-11-03
 
 ### Changed

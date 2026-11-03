@@ -2556,6 +2556,7 @@ def meeting_names_apply_payload(run: str) -> dict[str, Any]:
     staging, backups = _names_roots()
     with contextlib.redirect_stdout(sys.stderr):
         catch_up.apply(folder, staging, backups, archive_dir)
+        catch_up.refresh_dashboard(archive_dir, folder)
     return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
 
 
@@ -2583,6 +2584,8 @@ def meeting_names_undo_payload(run: str) -> dict[str, Any]:
     folder, _o, _m, archive_dir, _p, _s = _meeting_run(run)
     staging, backups = _names_roots()
     catch_up.undo(folder, backups, archive_dir)
+    with contextlib.redirect_stdout(sys.stderr):
+        catch_up.refresh_dashboard(archive_dir, folder)
     names_refresh.discard(folder, staging)
     return {"schema_version": 1, **names_refresh.status(folder, staging, backups)}
 
