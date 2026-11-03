@@ -286,5 +286,115 @@ class ModelFailureTests(unittest.TestCase):
                 ai.LLM_FAILURES = None
 
 
+QUOTE = "I will gather the cost information for the tools by Friday"
+
+
+class KeepEarlierTests(unittest.TestCase):
+    """A rebuild keeps firm action items the current summary already has."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.staging = root / "staging"
+        self.folder = make_meeting(root / "output")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def old_memory(self, *commitments):
+        write(self.folder / "meeting_memory.json", json.dumps({
+            "commitments": list(commitments), "decisions": [], "open_questions": [], "risks": []}))
+
+    def rebuilt(self, commitments=(), others=(), transcript=None):
+        text = QUOTE if transcript is None else transcript
+
+        def runner(work):
+            write(work / "meeting_transcript_cleaned.md", "**Avery**\n\n" + text + "\n")
+            write(work / "meeting_summary.md",
+                  "## Executive Summary\n\nText.\n\n## Action Items\n\nNone identified.\n\n## Risks and Concerns\n\nNone identified.\n")
+            write(work / "meeting_summary.html", "<p>x</p>")
+            write(work / "meeting_memory.json", json.dumps({
+                "commitments": list(commitments), "other_next_steps": list(others),
+                "decisions": [], "open_questions": [], "risks": []}))
+
+        status = catch_up.rebuild(self.folder, self.staging, runner)
+        work = self.staging / RUN / "work"
+        memory = json.loads((work / "meeting_memory.json").read_text(encoding="utf-8"))
+        summary = (work / "meeting_summary.md").read_text(encoding="utf-8")
+        return status, memory, summary
+
+    def item(self, owner="Avery", action="Gather cost information for the tools", evidence=QUOTE):
+        return {"owner": owner, "action": action, "due": "", "evidence": evidence, "status": "open"}
+
+    def test_missed_item_is_put_back_and_shown_in_the_summary(self):
+        self.old_memory(self.item())
+        status, memory, summary = self.rebuilt()
+        self.assertEqual(status["state"], "built")
+        self.assertEqual(status["kept_earlier"], 1)
+        self.assertEqual([c["owner"] for c in memory["commitments"]], ["Avery"])
+        self.assertIn("- Avery - Gather cost information for the tools - Due date not identified", summary)
+        self.assertNotIn("None identified.\n\n## Risks", summary)
+
+    def test_item_the_rebuild_already_has_is_not_repeated(self):
+        self.old_memory(self.item())
+        status, memory, _summary = self.rebuilt(commitments=[
+            self.item(action="Gather the cost information for the tools")])
+        self.assertEqual(status["kept_earlier"], 0)
+        self.assertEqual(len(memory["commitments"]), 1)
+
+    def test_unconfirmed_copy_is_replaced_by_the_firm_item(self):
+        self.old_memory(self.item())
+        _status, memory, summary = self.rebuilt(
+            others=["Avery - Gather cost information for the tools - Due date not identified"])
+        self.assertEqual(memory["other_next_steps"], [])
+        self.assertNotIn("Other next steps mentioned", summary)
+
+    def test_other_unconfirmed_steps_stay(self):
+        self.old_memory(self.item())
+        _status, memory, summary = self.rebuilt(others=["Dana - Book the room for the review"])
+        self.assertEqual(memory["other_next_steps"], ["Dana - Book the room for the review"])
+        self.assertIn("Other next steps mentioned (unconfirmed)", summary)
+
+    def test_item_whose_quote_is_gone_is_not_put_back(self):
+        self.old_memory(self.item())
+        status, memory, _summary = self.rebuilt(transcript="We talked about something else entirely today")
+        self.assertEqual(status["kept_earlier"], 0)
+        self.assertEqual(memory["commitments"], [])
+
+    def test_a_quote_with_extra_words_added_in_the_middle_still_matches(self):
+        self.old_memory(self.item(evidence="I'd say there's no harm in gathering the cost information."))
+        status, _memory, _summary = self.rebuilt(
+            transcript="I'd say there's, seems like there's no harm in gathering the cost information.")
+        self.assertEqual(status["kept_earlier"], 1)
+
+    def test_a_quote_only_in_the_raw_transcript_still_counts(self):
+        self.old_memory(self.item())
+        text = "We talked about something else entirely today"
+
+        def runner(work):
+            write(work / "meeting_transcript.md", "Avery: " + QUOTE)
+            write(work / "meeting_transcript_cleaned.md", "**Avery**\n\n" + text + "\n")
+            write(work / "meeting_summary.md", "## Action Items\n\nNone identified.\n")
+            write(work / "meeting_summary.html", "<p>x</p>")
+            write(work / "meeting_memory.json", json.dumps({
+                "commitments": [], "other_next_steps": [], "decisions": [],
+                "open_questions": [], "risks": []}))
+
+        status = catch_up.rebuild(self.folder, self.staging, runner)
+        self.assertEqual(status["kept_earlier"], 1)
+
+    def test_items_without_a_named_owner_or_a_quote_are_not_put_back(self):
+        self.old_memory(self.item(owner="Unknown"), self.item(owner="Remote"),
+                        self.item(evidence=""))
+        status, memory, _summary = self.rebuilt()
+        self.assertEqual(status["kept_earlier"], 0)
+        self.assertEqual(memory["commitments"], [])
+
+    def test_a_quote_with_a_dropped_word_still_matches(self):
+        self.old_memory(self.item(evidence="I will gather the cost information for the tools by um Friday"))
+        status, _memory, _summary = self.rebuilt()
+        self.assertEqual(status["kept_earlier"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -158,6 +158,94 @@ def default_runner(work: Path) -> None:
         config.NAMED_TRANSCRIPT = previous
 
 
+def keep_earlier_commitments(run_dir: Path, work: Path) -> int:
+    """Put back action items from the current summary that the rebuild did not find.
+
+    The model varies from run to run, so a rebuild can miss an item the current
+    summary has. An earlier item is kept when it has a named owner, its quote is
+    still in the rebuilt or the raw transcript, and the rebuild does not already have it
+    (as an action item, or as an unconfirmed next step, which it then replaces).
+    Returns how many were put back. Never raises.
+    """
+    try:
+        import ai
+        import markdown
+        import pipeline
+        from action_items_pass import locate, norm, repeats
+        from memory_reconciliation import _tokens, near_duplicate
+
+        run_dir, work = Path(run_dir), Path(work)
+        old = _read_json(run_dir / "meeting_memory.json")
+        memory_path = work / "meeting_memory.json"
+        new = _read_json(memory_path)
+        cleaned_path = work / "meeting_transcript_cleaned.md"
+        cleaned = cleaned_path.read_text(encoding="utf-8") if cleaned_path.exists() else ""
+        # The cleaning step varies from run to run, so a quote may be worded a
+        # little differently there; the raw transcript is what was actually said.
+        raw_path = work / "meeting_transcript.md"
+        raw = raw_path.read_text(encoding="utf-8") if raw_path.exists() else ""
+        source = cleaned + "\n" + raw
+        plain = norm(source)
+
+        commitments = [c for c in new.get("commitments") or [] if isinstance(c, dict)]
+        others = [str(line) for line in new.get("other_next_steps") or []]
+        shown = [_tokens(str(c.get("action", ""))) for c in commitments]
+        seen = [(c.get("owner", ""), c.get("action", ""), c.get("evidence", "")) for c in commitments]
+        added = 0
+        for item in old.get("commitments") or []:
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action", "")).strip()
+            owner = str(item.get("owner", "")).strip()
+            evidence = str(item.get("evidence", "")).strip()
+            if not action or not evidence or owner.casefold() in UNOWNED:
+                continue
+            if norm(evidence) not in plain and not locate(evidence, source, extra=6):
+                continue
+            words = _tokens(action)
+            if not words or near_duplicate(words, shown, jaccard=0.5) \
+                    or repeats(owner, action, evidence, seen):
+                continue
+            others = [line for line in others
+                      if not near_duplicate(_tokens(line), [words], jaccard=0.5)]
+            commitments.append(item)
+            shown.append(words)
+            seen.append((owner, action, evidence))
+            added += 1
+        if not added:
+            return 0
+
+        new["commitments"] = commitments
+        new["other_next_steps"] = others
+        _write_json(memory_path, new)
+
+        lines = []
+        for c in commitments:
+            text = str(c.get("action", "")).strip()
+            if not text:
+                continue
+            who = str(c.get("owner", "")).strip() or "Owner not identified"
+            if who == "Unknown":
+                who = "Owner not identified"
+            due = str(c.get("due", "") or "").strip()
+            line = f"- {who} - {text} - " + (f"Due: {due}" if due else "Due date not identified")
+            if line not in lines:
+                lines.append(line)
+        body = ai._with_unconfirmed("\n".join(lines) or "None identified.", others,
+                                    "Other next steps mentioned (unconfirmed)")
+        summary_path = work / "meeting_summary.md"
+        composed = ai._replace_markdown_section(
+            summary_path.read_text(encoding="utf-8"), "Action Items", body)
+        summary_path.write_text(composed, encoding="utf-8")
+        (work / "meeting_summary.html").write_text(
+            pipeline.build_summary_html(summary_html=markdown.markdown(composed)),
+            encoding="utf-8")
+        return added
+    except Exception as error:      # noqa: BLE001 - this is a safety net, never a reason to fail
+        print(f"Note: earlier action items were not carried over ({error})", flush=True)
+        return 0
+
+
 def rebuild(
     run_dir: Path,
     staging_root: Path,
@@ -183,6 +271,7 @@ def rebuild(
         missing = [name for name in REPLACED if not (work / name).exists()]
         if missing:
             raise CatchUpError("the rebuild did not produce " + ", ".join(missing))
+        kept = keep_earlier_commitments(run_dir, work)
     except Exception as error:      # noqa: BLE001 - one bad meeting must not stop a batch
         shutil.rmtree(target, ignore_errors=True)
         return {"state": "failed", "reason": str(error)}
@@ -191,6 +280,7 @@ def rebuild(
         "built": (now or datetime.now()).isoformat(timespec="seconds"),
         "old": memory_counts(_read_json(run_dir / "meeting_memory.json")),
         "new": memory_counts(_read_json(work / "meeting_memory.json")),
+        "kept_earlier": kept,
     }
     _write_json(target / "status.json", status)
     return status

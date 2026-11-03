@@ -6,6 +6,11 @@ Use the `Unreleased` section for user-visible features, significant bug fixes, a
 
 ## Unreleased
 
+## v2.6.2 — 2026-11-03
+
+### Changed
+- **An update after naming voices keeps your action items.** The model varies from run to run, so a rebuild could miss an action item the current summary had (a preview test lost two). Now an earlier action item with a named owner is put back when its quote is still in the rebuilt or the original transcript and the rebuild does not already have it; an unconfirmed copy of it is replaced by the firm item. Preview shows only what really changed.
+
 ### Developer tools
 - The release audit and the history scan also block names kept in the private local files (known people, name replacements, report terms), not only names taken from meeting and file names. The owner's own names are left out; harmless words go in `derived_allow` as before.
 

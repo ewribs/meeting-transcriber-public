@@ -135,12 +135,14 @@ def repeats(owner, task, evidence, seen: list[tuple]) -> bool:
 _HEADER = re.compile(r"\[\d{1,2}:\d{2}(?::\d{2})?\]|\*\*[^*\n]{1,60}\*\*")
 
 
-def locate(evidence: str, chunk: str, minimum: float = 0.85) -> str | None:
+def locate(evidence: str, chunk: str, minimum: float = 0.85, extra: int = 2) -> str | None:
     """The transcript text a not-quite-exact quote refers to, or None.
 
     The model sometimes drops a filler word or fixes a stutter when it copies a
     quote. If most of its words line up with one stretch of the transcript, that
-    stretch is the evidence (shown as it really was said).
+    stretch is the evidence (shown as it really was said). `extra` is how many
+    extra words the real stretch may have (2 normally; more when the wording was
+    changed by a later cleaning run).
     """
     import difflib
     plain = _HEADER.sub(" ", chunk)
@@ -156,7 +158,7 @@ def locate(evidence: str, chunk: str, minimum: float = 0.85) -> str | None:
     for start in range(len(key)):
         if key[start] not in anchors:
             continue
-        for size in (length, length + 2, length - 2):
+        for size in (length, length + 2, length - 2, *range(length + 3, length + extra + 1)):
             if size < 3:
                 continue
             window = key[start:start + size]
